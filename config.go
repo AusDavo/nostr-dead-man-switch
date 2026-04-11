@@ -22,6 +22,7 @@ type Config struct {
 	WarningCount     int      `yaml:"warning_count"`
 	CheckInterval    Duration `yaml:"check_interval"`
 	StateFile        string   `yaml:"state_file"`
+	ListenAddr       string   `yaml:"listen_addr"`
 	Actions          []Action `yaml:"actions"`
 
 	// Derived at load time

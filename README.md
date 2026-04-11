@@ -55,25 +55,20 @@ git clone https://github.com/AusDavo/nostr-dead-man-switch.git
 cd nostr-dead-man-switch
 
 # Generate a bot keypair
-docker run --rm nostr-deadman --generate-key
+docker compose run --rm deadman --generate-key
 
-# Configure
+# Set up secrets
+cp .env.example .env
+# Edit .env with the bot nsec you just generated (and SMTP password if using email)
+
+# Set up config
 cp config.example.yaml config.yaml
-# Edit config.yaml with your npub, bot nsec, relays, and actions
+# Edit config.yaml with your npub, relays, timing, and actions
 
 # Run
 docker compose up -d
-```
 
-### Docker with environment variables
-
-```bash
-# Create .env file
-echo "BOT_NSEC=nsec1..." > .env
-echo "SMTP_PASSWORD=..." >> .env
-
-# Run
-docker compose up -d
+# Status page at http://localhost:8080
 ```
 
 ### Build from source
@@ -96,9 +91,10 @@ See [config.example.yaml](config.example.yaml) for the full reference. Key setti
 | `warning_interval` | `24h` | Time between warning DMs |
 | `warning_count` | `2` | Number of warning DMs before triggering |
 | `check_interval` | `1h` | How often to evaluate the timer |
+| `listen_addr` | — | Status page address (e.g. `:8080`). Empty = disabled |
 | `state_file` | `state.json` | Where to persist state |
 
-Environment variables are expanded in the config file: `${BOT_NSEC}`, `${SMTP_PASSWORD}`, etc.
+Secrets go in `.env` (see [.env.example](.env.example)) and are expanded in the config via `${VAR_NAME}`.
 
 ## Trigger actions
 
@@ -152,6 +148,16 @@ Sign an event with your own key ahead of time — the bot just publishes it. Nev
       - "wss://nos.lol"
 ```
 
+## Status page
+
+Set `listen_addr: ":8080"` in your config to enable a status dashboard. Shows current silence duration, timer progress, warning state, and connected relays. Auto-refreshes every 60 seconds.
+
+A `/health` JSON endpoint is also available for monitoring:
+
+```json
+{"status":"healthy","last_seen":"2026-04-11T12:00:00Z","silence_seconds":3600,"warnings_sent":0,"triggered":false}
+```
+
 ## State and re-arming
 
 State is persisted to a JSON file (default: `state.json`). To re-arm the switch after it triggers, delete the state file and restart.
@@ -164,11 +170,7 @@ The state file tracks:
 ## Generate a bot key
 
 ```bash
-# From Docker
-docker run --rm nostr-deadman --generate-key
-
-# From source
-./nostr-deadman --generate-key
+docker compose run --rm deadman --generate-key
 ```
 
 Use a dedicated keypair for the bot. Do **not** use your main nsec.

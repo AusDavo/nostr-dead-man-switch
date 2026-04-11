@@ -1,6 +1,6 @@
 # Nostr Dead Man's Switch - Configuration
 # Copy this file to config.yaml and fill in your values.
-# Environment variables are supported: ${VAR_NAME}
+# Secrets use ${VAR_NAME} — set them in .env (see .env.example)
 
 # ── Identity ──────────────────────────────────────────────
 
@@ -33,6 +33,12 @@ warning_count: 2
 
 # How often to evaluate the timer (default: 1h)
 check_interval: "1h"
+
+# ── Status Page ───────────────────────────────────────────
+
+# Optional: serve a status dashboard and /health endpoint
+# Remove or leave empty to disable
+listen_addr: ":8080"
 
 # ── State ─────────────────────────────────────────────────
 

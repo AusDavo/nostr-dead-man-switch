@@ -1,13 +1,14 @@
 services:
   deadman:
     build: .
+    ports:
+      - "8080:8080"
     volumes:
       - ./config.yaml:/data/config.yaml:ro
       - deadman-data:/data
+    env_file:
+      - .env
     environment:
-      - BOT_NSEC=${BOT_NSEC}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - WEBHOOK_TOKEN=${WEBHOOK_TOKEN:-}
       - TZ=${TZ:-UTC}
     restart: unless-stopped
 

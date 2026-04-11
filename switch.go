@@ -7,9 +7,10 @@ import (
 )
 
 type DeadManSwitch struct {
-	cfg     *Config
-	state   *State
-	monitor *Monitor
+	cfg       *Config
+	state     *State
+	monitor   *Monitor
+	startedAt time.Time
 }
 
 func NewDeadManSwitch(cfg *Config, state *State) *DeadManSwitch {
@@ -40,6 +41,9 @@ func (d *DeadManSwitch) Run(ctx context.Context) error {
 			d.state.Save(d.cfg.StateFile)
 		}
 	}
+
+	d.startedAt = time.Now()
+	d.startServer(ctx)
 
 	log.Printf("Monitoring %s across %d relays", d.cfg.WatchPubkey, len(d.cfg.Relays))
 	log.Printf("Silence threshold: %s | Warning interval: %s | Warnings: %d",
