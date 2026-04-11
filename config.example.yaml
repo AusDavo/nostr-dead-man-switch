@@ -66,13 +66,13 @@ actions: []
   #
   # - type: email
   #   config:
-  #     smtp_host: "${SMTP_HOST}"
-  #     smtp_port: ${SMTP_PORT}
-  #     smtp_user: "${SMTP_USER}"
-  #     smtp_pass: "${SMTP_PASS}"
-  #     from: "${SMTP_FROM}"
+  #     smtp_host: smtp.fastmail.com       # or smtp.gmail.com, etc.
+  #     smtp_port: 587
+  #     smtp_user: you@fastmail.com        # login username
+  #     smtp_pass: "${SMTP_PASS}"          # app password — keep in .env
+  #     from: you@yourdomain.com           # sending address (can differ from login)
   #     to: "spouse@example.com"
-  #     subject: "Automated message from David"
+  #     subject: "Automated message"
   #     body: |
   #       Hi,
   #
@@ -92,11 +92,11 @@ actions: []
   # Second recipient (lawyer, executor, etc.)
   # - type: email
   #   config:
-  #     smtp_host: "${SMTP_HOST}"
-  #     smtp_port: ${SMTP_PORT}
-  #     smtp_user: "${SMTP_USER}"
+  #     smtp_host: smtp.fastmail.com
+  #     smtp_port: 587
+  #     smtp_user: you@fastmail.com
   #     smtp_pass: "${SMTP_PASS}"
-  #     from: "${SMTP_FROM}"
+  #     from: you@yourdomain.com
   #     to: "lawyer@example.com"
   #     subject: "Dead man's switch activated — client notification"
   #     body: |

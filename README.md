@@ -94,7 +94,7 @@ See [config.example.yaml](config.example.yaml) for the full reference. Key setti
 | `listen_addr` | — | Status page address (e.g. `:8080`). Empty = disabled |
 | `state_file` | `state.json` | Where to persist state |
 
-Secrets go in `.env` (see [.env.example](.env.example)) and are expanded in the config via `${VAR_NAME}`.
+Non-secret config (hosts, ports, addresses) goes directly in `config.yaml`. Only passwords, tokens, and webhook URLs go in `.env` (see [.env.example](.env.example)) and are referenced via `${VAR_NAME}`.
 
 ## Trigger actions
 
@@ -107,11 +107,11 @@ One action per recipient. Duplicate the block for each person (spouse, lawyer, e
 ```yaml
 - type: email
   config:
-    smtp_host: "${SMTP_HOST}"     # smtp.fastmail.com, smtp.gmail.com, etc.
-    smtp_port: ${SMTP_PORT}       # usually 587
-    smtp_user: "${SMTP_USER}"     # login username (e.g. you@fastmail.com)
-    smtp_pass: "${SMTP_PASS}"     # app password (not your login password)
-    from: "${SMTP_FROM}"          # sending address (e.g. you@yourdomain.com)
+    smtp_host: smtp.fastmail.com  # or smtp.gmail.com, etc.
+    smtp_port: 587
+    smtp_user: you@fastmail.com   # login username
+    smtp_pass: "${SMTP_PASS}"     # app password — only secret, lives in .env
+    from: you@yourdomain.com      # sending address (can differ from login)
     to: "spouse@example.com"
     subject: "Automated message from David"
     body: |
