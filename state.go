@@ -1,0 +1,68 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"sync"
+	"time"
+)
+
+type State struct {
+	mu          sync.Mutex `json:"-"`
+	LastSeen    time.Time  `json:"last_seen"`
+	LastEventID string     `json:"last_event_id"`
+	WarningSent int        `json:"warnings_sent"`
+	Triggered   bool       `json:"triggered"`
+	TriggeredAt *time.Time `json:"triggered_at,omitempty"`
+}
+
+func NewState() *State {
+	return &State{}
+}
+
+func LoadState(path string) (*State, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (s *State) Save(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func (s *State) RecordEvent(eventID string, createdAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if createdAt.After(s.LastSeen) {
+		s.LastSeen = createdAt
+		s.LastEventID = eventID
+	}
+	// Any activity resets warning state
+	s.WarningSent = 0
+}
+
+func (s *State) RecordWarning() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.WarningSent++
+}
+
+func (s *State) RecordTrigger() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Triggered = true
+	now := time.Now()
+	s.TriggeredAt = &now
+}

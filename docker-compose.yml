@@ -1,0 +1,15 @@
+services:
+  deadman:
+    build: .
+    volumes:
+      - ./config.yaml:/data/config.yaml:ro
+      - deadman-data:/data
+    environment:
+      - BOT_NSEC=${BOT_NSEC}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - WEBHOOK_TOKEN=${WEBHOOK_TOKEN:-}
+      - TZ=${TZ:-UTC}
+    restart: unless-stopped
+
+volumes:
+  deadman-data:

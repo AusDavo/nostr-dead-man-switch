@@ -1,0 +1,9 @@
+config.yaml
+state.json
+.env
+.git
+.github
+README.md
+LICENSE
+docker-compose.yml
+*.exe

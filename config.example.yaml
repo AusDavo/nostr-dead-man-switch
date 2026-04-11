@@ -1,0 +1,83 @@
+# Nostr Dead Man's Switch - Configuration
+# Copy this file to config.yaml and fill in your values.
+# Environment variables are supported: ${VAR_NAME}
+
+# ── Identity ──────────────────────────────────────────────
+
+# The npub (or hex pubkey) to monitor for activity
+watch_pubkey: "npub1..."
+
+# Bot's private key for sending warning DMs
+# Generate one with: nostr-deadman --generate-key
+# This should NOT be your main key — use a dedicated bot key
+bot_nsec: "${BOT_NSEC}"
+
+# ── Relays ────────────────────────────────────────────────
+
+relays:
+  - "wss://relay.damus.io"
+  - "wss://nos.lol"
+  - "wss://relay.nostr.band"
+
+# ── Timing ────────────────────────────────────────────────
+
+# How long of silence before the first warning DM
+# Supports: 30d, 4w, 720h
+silence_threshold: "30d"
+
+# Time between warning DMs
+warning_interval: "24h"
+
+# Number of warning DMs before triggering (default: 2)
+warning_count: 2
+
+# How often to evaluate the timer (default: 1h)
+check_interval: "1h"
+
+# ── State ─────────────────────────────────────────────────
+
+# Where to persist state (last seen timestamp, warning count)
+# Delete this file to re-arm after a trigger
+state_file: "/data/state.json"
+
+# ── Trigger Actions ───────────────────────────────────────
+# All actions execute when the switch triggers.
+
+actions:
+  # Send an email
+  # - type: email
+  #   config:
+  #     to: "loved-one@example.com"
+  #     subject: "Automated message from dead man's switch"
+  #     body: |
+  #       This is an automated message. I have been inactive on Nostr
+  #       for an extended period and did not respond to check-in messages.
+  #     smtp_host: "smtp.gmail.com"
+  #     smtp_port: 587
+  #     smtp_user: "you@gmail.com"
+  #     smtp_pass: "${SMTP_PASSWORD}"
+
+  # Hit a webhook
+  # - type: webhook
+  #   config:
+  #     url: "https://example.com/deadman-webhook"
+  #     method: "POST"
+  #     headers:
+  #       Content-Type: "application/json"
+  #       Authorization: "Bearer ${WEBHOOK_TOKEN}"
+  #     body: '{"event": "dead_mans_switch_triggered", "npub": "npub1..."}'
+
+  # Publish a note signed by the bot
+  # - type: nostr_note
+  #   config:
+  #     content: "This is an automated message from my dead man's switch."
+  #     relays:
+  #       - "wss://relay.damus.io"
+
+  # Publish a pre-signed event (signed with YOUR key ahead of time)
+  # - type: nostr_event
+  #   config:
+  #     event_json: '{"id":"...","pubkey":"...","sig":"...","kind":1,"content":"...","tags":[],"created_at":0}'
+  #     relays:
+  #       - "wss://relay.damus.io"
+  #       - "wss://nos.lol"
