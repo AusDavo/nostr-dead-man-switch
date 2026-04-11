@@ -98,31 +98,95 @@ Secrets go in `.env` (see [.env.example](.env.example)) and are expanded in the 
 
 ## Trigger actions
 
-### Email
+All actions are configured in `config.yaml` under `actions:`. Secrets (passwords, tokens, webhook URLs) go in `.env` and are referenced as `${VAR_NAME}`. See [config.example.yaml](config.example.yaml) for complete, ready-to-uncomment templates for every action type.
+
+### Email (SMTP)
+
+One action per recipient. Duplicate the block for each person (spouse, lawyer, executor, etc.).
 
 ```yaml
 - type: email
   config:
-    to: "loved-one@example.com"
-    subject: "Automated message"
-    body: "This is an automated message from my dead man's switch."
-    smtp_host: "smtp.gmail.com"
-    smtp_port: 587
-    smtp_user: "you@gmail.com"
-    smtp_pass: "${SMTP_PASSWORD}"
+    smtp_host: "${SMTP_HOST}"     # smtp.fastmail.com, smtp.gmail.com, etc.
+    smtp_port: ${SMTP_PORT}       # usually 587
+    smtp_user: "${SMTP_USER}"     # your email address
+    smtp_pass: "${SMTP_PASS}"     # app password (not your login password)
+    to: "spouse@example.com"
+    subject: "Automated message from David"
+    body: |
+      Hi,
+
+      This is an automated message. My Nostr account has been inactive
+      for over 30 days, and I did not respond to two check-in attempts.
+
+      This may mean I am incapacitated, unreachable, or worse.
+      Please follow the instructions we discussed, or refer to the
+      documents in [location].
+
+      — Sent automatically by nostr-dead-man-switch
 ```
 
-### Webhook
+### ntfy push notification
 
 ```yaml
 - type: webhook
   config:
-    url: "https://example.com/hook"
+    url: "${NTFY_URL}"            # https://ntfy.sh/your-topic or self-hosted
+    method: "POST"
+    headers:
+      Title: "Dead Man's Switch Triggered"
+      Priority: "5"
+      Tags: "warning,skull"
+    body: "No Nostr activity or DM response for 30+ days."
+```
+
+### Telegram bot
+
+```yaml
+- type: webhook
+  config:
+    url: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
     method: "POST"
     headers:
       Content-Type: "application/json"
-      Authorization: "Bearer ${TOKEN}"
-    body: '{"triggered": true}'
+    body: '{"chat_id":"${TELEGRAM_CHAT_ID}","text":"Dead mans switch triggered. No Nostr activity for 30+ days."}'
+```
+
+### Discord / Slack webhook
+
+```yaml
+# Discord
+- type: webhook
+  config:
+    url: "${DISCORD_WEBHOOK_URL}"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+    body: '{"content":"**Dead Mans Switch Triggered**\nNo Nostr activity for 30+ days."}'
+
+# Slack
+- type: webhook
+  config:
+    url: "${SLACK_WEBHOOK_URL}"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+    body: '{"text":"*Dead Mans Switch Triggered*\nNo Nostr activity for 30+ days."}'
+```
+
+### Generic webhook
+
+Works with n8n, Zapier, Make, Home Assistant, custom APIs, etc.
+
+```yaml
+- type: webhook
+  config:
+    url: "https://your-service.example.com/api/deadman"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+    body: '{"event":"triggered","source":"nostr-dead-man-switch"}'
 ```
 
 ### Nostr note (signed by bot)
@@ -130,19 +194,29 @@ Secrets go in `.env` (see [.env.example](.env.example)) and are expanded in the 
 ```yaml
 - type: nostr_note
   config:
-    content: "This is an automated message from my dead man's switch."
+    content: |
+      This is an automated message from a dead man's switch.
+      The owner of this bot has been inactive on Nostr for over 30 days
+      and did not respond to private check-in messages.
     relays:
       - "wss://relay.damus.io"
+      - "wss://nos.lol"
 ```
 
-### Pre-signed Nostr event
+### Pre-signed Nostr event (from YOUR identity)
 
-Sign an event with your own key ahead of time — the bot just publishes it. Never needs your nsec.
+Sign an event with your own nsec ahead of time — the bot just publishes it. It appears as your post, not the bot's. The bot never sees your private key.
 
+Create one with [nak](https://github.com/fiatjaf/nak) or any nostr signing tool:
+```bash
+echo '{"kind":1,"content":"If you are reading this, my dead mans switch has activated."}' | nak event --sec nsec1...
+```
+
+Then paste the full signed JSON:
 ```yaml
 - type: nostr_event
   config:
-    event_json: '{"id":"...","pubkey":"...","sig":"...","kind":1,"content":"...","tags":[],"created_at":0}'
+    event_json: '{"id":"...","pubkey":"...","created_at":0,"kind":1,"tags":[],"content":"...","sig":"..."}'
     relays:
       - "wss://relay.damus.io"
       - "wss://nos.lol"

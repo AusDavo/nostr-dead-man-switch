@@ -1,6 +1,6 @@
 # Nostr Dead Man's Switch - Configuration
-# Copy this file to config.yaml and fill in your values.
-# Secrets use ${VAR_NAME} — set them in .env (see .env.example)
+# Copy to config.yaml and fill in your values.
+# Secrets use ${VAR_NAME} syntax — define them in .env (see .env.example)
 
 # ── Identity ──────────────────────────────────────────────
 
@@ -8,8 +8,8 @@
 watch_pubkey: "npub1..."
 
 # Bot's private key for sending warning DMs
-# Generate one with: nostr-deadman --generate-key
-# This should NOT be your main key — use a dedicated bot key
+# Generate with: docker compose run --rm deadman --generate-key
+# Use a DEDICATED bot key — NOT your main nsec
 bot_nsec: "${BOT_NSEC}"
 
 # ── Relays ────────────────────────────────────────────────
@@ -22,68 +22,204 @@ relays:
 # ── Timing ────────────────────────────────────────────────
 
 # How long of silence before the first warning DM
-# Supports: 30d, 4w, 720h
+# Supports: 30d, 4w, 720h, etc.
 silence_threshold: "30d"
 
 # Time between warning DMs
 warning_interval: "24h"
 
-# Number of warning DMs before triggering (default: 2)
+# Number of warning DMs before triggering
 warning_count: 2
 
-# How often to evaluate the timer (default: 1h)
+# How often to evaluate the timer
 check_interval: "1h"
 
 # ── Status Page ───────────────────────────────────────────
 
-# Optional: serve a status dashboard and /health endpoint
-# Remove or leave empty to disable
+# Serve a status dashboard and /health JSON endpoint
+# Leave empty or remove to disable
 listen_addr: ":8080"
 
 # ── State ─────────────────────────────────────────────────
 
-# Where to persist state (last seen timestamp, warning count)
-# Delete this file to re-arm after a trigger
+# Persistent state file (last seen timestamp, warning count, triggered flag)
+# Delete this file and restart to re-arm after a trigger
 state_file: "/data/state.json"
 
 # ── Trigger Actions ───────────────────────────────────────
-# All actions execute when the switch triggers.
+# Everything below fires when the switch triggers.
+# Uncomment the actions you want. You can use as many as you need.
 
-actions:
-  # Send an email
+actions: []
+
+  # ────────────────────────────────────────────────────────
+  # EMAIL
+  # ────────────────────────────────────────────────────────
+  # Sends via SMTP. One action per recipient — duplicate the
+  # block for each person (spouse, lawyer, family, etc.)
+  #
+  # Common SMTP servers:
+  #   Gmail:    smtp.gmail.com:587  (use an App Password, not your login)
+  #   Fastmail: smtp.fastmail.com:587
+  #   Outlook:  smtp-mail.outlook.com:587
+  #   Proton:   127.0.0.1:1025 (via Proton Bridge)
+  #
   # - type: email
   #   config:
-  #     to: "loved-one@example.com"
-  #     subject: "Automated message from dead man's switch"
+  #     smtp_host: "${SMTP_HOST}"
+  #     smtp_port: ${SMTP_PORT}
+  #     smtp_user: "${SMTP_USER}"
+  #     smtp_pass: "${SMTP_PASS}"
+  #     to: "spouse@example.com"
+  #     subject: "Automated message from David"
   #     body: |
-  #       This is an automated message. I have been inactive on Nostr
-  #       for an extended period and did not respond to check-in messages.
-  #     smtp_host: "smtp.gmail.com"
-  #     smtp_port: 587
-  #     smtp_user: "you@gmail.com"
-  #     smtp_pass: "${SMTP_PASSWORD}"
+  #       Hi,
+  #
+  #       This is an automated message. My Nostr account has been inactive for
+  #       over 30 days, and I did not respond to two check-in attempts.
+  #
+  #       This may mean I am incapacitated, unreachable, or worse.
+  #
+  #       Please follow the instructions we discussed, or refer to the
+  #       documents in [location — safe, desk drawer, password manager, etc.].
+  #
+  #       If you need technical help with my accounts or keys, contact
+  #       [trusted friend/family] at [phone/email].
+  #
+  #       — Sent automatically by nostr-dead-man-switch
 
-  # Hit a webhook
+  # Second recipient (lawyer, executor, etc.)
+  # - type: email
+  #   config:
+  #     smtp_host: "${SMTP_HOST}"
+  #     smtp_port: ${SMTP_PORT}
+  #     smtp_user: "${SMTP_USER}"
+  #     smtp_pass: "${SMTP_PASS}"
+  #     to: "lawyer@example.com"
+  #     subject: "Dead man's switch activated — client notification"
+  #     body: |
+  #       This is an automated notification. My digital dead man's switch
+  #       has activated after 30+ days of inactivity and no response to
+  #       check-in attempts.
+  #
+  #       Please proceed with the instructions on file.
+  #
+  #       — Sent automatically by nostr-dead-man-switch
+
+  # ────────────────────────────────────────────────────────
+  # NTFY  (https://ntfy.sh)
+  # ────────────────────────────────────────────────────────
+  # Push notification to your phone via ntfy. Self-hosted or
+  # ntfy.sh cloud. No account needed for public topics.
+  #
   # - type: webhook
   #   config:
-  #     url: "https://example.com/deadman-webhook"
+  #     url: "${NTFY_URL}"
+  #     method: "POST"
+  #     headers:
+  #       Title: "Dead Man's Switch Triggered"
+  #       Priority: "5"
+  #       Tags: "warning,skull"
+  #       # Only needed if your ntfy topic requires auth:
+  #       # Authorization: "Bearer ${NTFY_TOKEN}"
+  #     body: "Dead man's switch activated. No Nostr activity or DM response for 30+ days."
+
+  # ────────────────────────────────────────────────────────
+  # TELEGRAM BOT
+  # ────────────────────────────────────────────────────────
+  # Create a bot via @BotFather, get the token. Send /start
+  # to your bot, then get your chat_id from:
+  #   https://api.telegram.org/bot<TOKEN>/getUpdates
+  #
+  # - type: webhook
+  #   config:
+  #     url: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+  #     method: "POST"
+  #     headers:
+  #       Content-Type: "application/json"
+  #     body: '{"chat_id":"${TELEGRAM_CHAT_ID}","text":"Dead man'\''s switch triggered. No Nostr activity or DM response for 30+ days.","parse_mode":"Markdown"}'
+
+  # ────────────────────────────────────────────────────────
+  # DISCORD WEBHOOK
+  # ────────────────────────────────────────────────────────
+  # Server Settings → Integrations → Webhooks → New Webhook
+  # Copy the webhook URL (it contains the auth token).
+  #
+  # - type: webhook
+  #   config:
+  #     url: "${DISCORD_WEBHOOK_URL}"
+  #     method: "POST"
+  #     headers:
+  #       Content-Type: "application/json"
+  #     body: '{"content":"**Dead Man'\''s Switch Triggered**\nNo Nostr activity or DM response for 30+ days."}'
+
+  # ────────────────────────────────────────────────────────
+  # SLACK WEBHOOK
+  # ────────────────────────────────────────────────────────
+  # Create at: https://api.slack.com/messaging/webhooks
+  # The URL itself is the credential — keep it in .env.
+  #
+  # - type: webhook
+  #   config:
+  #     url: "${SLACK_WEBHOOK_URL}"
+  #     method: "POST"
+  #     headers:
+  #       Content-Type: "application/json"
+  #     body: '{"text":"*Dead Man'\''s Switch Triggered*\nNo Nostr activity or DM response for 30+ days."}'
+
+  # ────────────────────────────────────────────────────────
+  # GENERIC WEBHOOK
+  # ────────────────────────────────────────────────────────
+  # POST/GET/PUT to any URL. Use for n8n, Zapier, Make,
+  # Home Assistant, custom APIs, etc.
+  #
+  # - type: webhook
+  #   config:
+  #     url: "https://your-service.example.com/api/deadman"
   #     method: "POST"
   #     headers:
   #       Content-Type: "application/json"
   #       Authorization: "Bearer ${WEBHOOK_TOKEN}"
-  #     body: '{"event": "dead_mans_switch_triggered", "npub": "npub1..."}'
+  #     body: '{"event":"triggered","source":"nostr-dead-man-switch","message":"No activity for 30+ days"}'
 
-  # Publish a note signed by the bot
+  # ────────────────────────────────────────────────────────
+  # NOSTR NOTE (signed by bot)
+  # ────────────────────────────────────────────────────────
+  # Publishes a kind-1 note from the bot's npub.
+  # Useful for a public announcement on your behalf.
+  #
   # - type: nostr_note
   #   config:
-  #     content: "This is an automated message from my dead man's switch."
-  #     relays:
-  #       - "wss://relay.damus.io"
-
-  # Publish a pre-signed event (signed with YOUR key ahead of time)
-  # - type: nostr_event
-  #   config:
-  #     event_json: '{"id":"...","pubkey":"...","sig":"...","kind":1,"content":"...","tags":[],"created_at":0}'
+  #     content: |
+  #       This is an automated message from a dead man's switch.
+  #
+  #       The owner of this bot has been inactive on Nostr for over 30 days
+  #       and did not respond to private check-in messages.
+  #
+  #       If you need to reach them, please try other channels.
   #     relays:
   #       - "wss://relay.damus.io"
   #       - "wss://nos.lol"
+  #       - "wss://relay.nostr.band"
+
+  # ────────────────────────────────────────────────────────
+  # PRE-SIGNED NOSTR EVENT (published from YOUR identity)
+  # ────────────────────────────────────────────────────────
+  # The bot publishes an event YOU signed ahead of time with
+  # your own nsec. It appears as YOUR post, not the bot's.
+  # The bot never sees your private key.
+  #
+  # To create a pre-signed event:
+  #   1. Craft and sign the event using any nostr tool, e.g.:
+  #      - nak (CLI): echo '{"kind":1,"content":"..."}' | nak event --sec nsec1...
+  #      - nostr-tools (JS), python-nostr, etc.
+  #   2. Paste the full JSON below (the entire signed event)
+  #   3. The bot verifies the signature before publishing
+  #
+  # - type: nostr_event
+  #   config:
+  #     event_json: '{"id":"...","pubkey":"...","created_at":0,"kind":1,"tags":[],"content":"If you are reading this, my dead man'\''s switch has activated. I have been unreachable for over 30 days.","sig":"..."}'
+  #     relays:
+  #       - "wss://relay.damus.io"
+  #       - "wss://nos.lol"
+  #       - "wss://relay.nostr.band"
