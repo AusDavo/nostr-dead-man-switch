@@ -73,7 +73,7 @@ type statusData struct {
 	StatusLabel   string
 	Progress      int
 	TimeRemaining string
-	Relays        int
+	Relays        []RelayStatus
 	StartedAt     string
 }
 
@@ -92,21 +92,24 @@ func (d *DeadManSwitch) currentStatus() string {
 }
 
 func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
+	loc := d.cfg.location
+	tfmt := "2006-01-02 15:04 MST"
+
 	d.state.mu.Lock()
 	silence := time.Since(d.state.LastSeen)
 	data := statusData{
 		WatchPubkey:  truncateMiddle(d.cfg.WatchPubkey, 20),
-		LastSeen:     d.state.LastSeen.Format("2006-01-02 15:04 MST"),
+		LastSeen:     d.state.LastSeen.In(loc).Format(tfmt),
 		SilenceAge:   humanDuration(silence),
 		Threshold:    humanDuration(d.cfg.SilenceThreshold.Duration),
 		WarningsSent: d.state.WarningSent,
 		WarningsMax:  d.cfg.WarningCount,
 		Triggered:    d.state.Triggered,
-		Relays:       len(d.cfg.Relays),
-		StartedAt:    d.startedAt.Format("2006-01-02 15:04 MST"),
+		Relays:       d.monitor.Statuses(),
+		StartedAt:    d.startedAt.In(loc).Format(tfmt),
 	}
 	if d.state.TriggeredAt != nil {
-		data.TriggeredAt = d.state.TriggeredAt.Format("2006-01-02 15:04 MST")
+		data.TriggeredAt = d.state.TriggeredAt.In(loc).Format(tfmt)
 	}
 	d.state.mu.Unlock()
 
@@ -303,6 +306,23 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
     margin-top: 1rem;
   }
   .footer a { color: var(--muted); }
+  .relay-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.375rem;
+  }
+  .relay-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .relay-url {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-family: monospace;
+  }
 </style>
 </head>
 <body>
@@ -338,16 +358,15 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 
   <div class="card">
     <div class="card-title">Activity</div>
-    <div class="stat-grid">
-      <div>
-        <div class="stat-label">Last seen</div>
-        <div class="stat-value">{{.LastSeen}}</div>
-      </div>
-      <div>
-        <div class="stat-label">Relays</div>
-        <div class="stat-value">{{.Relays}} connected</div>
-      </div>
+    <div class="stat-label">Last seen</div>
+    <div class="stat-value" style="margin-bottom:1rem">{{.LastSeen}}</div>
+    <div class="stat-label" style="margin-bottom:0.5rem">Relays</div>
+    {{range .Relays}}
+    <div class="relay-row">
+      <span class="relay-dot" style="background:{{if .Connected}}var(--green){{else}}var(--red){{end}};box-shadow:0 0 6px {{if .Connected}}var(--green){{else}}var(--red){{end}};"></span>
+      <span class="relay-url">{{.URL}}</span>
     </div>
+    {{end}}
   </div>
 
   <div class="card">

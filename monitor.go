@@ -3,20 +3,55 @@ package main
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 )
 
+type RelayStatus struct {
+	URL       string
+	Connected bool
+	Error     string
+}
+
 type Monitor struct {
-	cfg     *Config
-	eventCh chan *nostr.Event
+	cfg      *Config
+	eventCh  chan *nostr.Event
+	mu       sync.RWMutex
+	statuses map[string]*RelayStatus
 }
 
 func NewMonitor(cfg *Config) *Monitor {
+	statuses := make(map[string]*RelayStatus)
+	for _, url := range cfg.Relays {
+		statuses[url] = &RelayStatus{URL: url}
+	}
 	return &Monitor{
-		cfg:     cfg,
-		eventCh: make(chan *nostr.Event, 100),
+		cfg:      cfg,
+		eventCh:  make(chan *nostr.Event, 100),
+		statuses: statuses,
+	}
+}
+
+func (m *Monitor) Statuses() []RelayStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]RelayStatus, 0, len(m.cfg.Relays))
+	for _, url := range m.cfg.Relays {
+		if s, ok := m.statuses[url]; ok {
+			result = append(result, *s)
+		}
+	}
+	return result
+}
+
+func (m *Monitor) setStatus(url string, connected bool, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.statuses[url]; ok {
+		s.Connected = connected
+		s.Error = errMsg
 	}
 }
 
@@ -40,11 +75,13 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		relay, err := nostr.RelayConnect(ctx, url)
 		if err != nil {
 			log.Printf("[monitor] connect failed %s: %v", url, err)
+			m.setStatus(url, false, err.Error())
 			sleepCtx(ctx, 30*time.Second)
 			continue
 		}
 
 		log.Printf("[monitor] connected to %s", url)
+		m.setStatus(url, true, "")
 
 		filters := nostr.Filters{{
 			Authors: []string{m.cfg.watchPubkeyHex},
@@ -54,6 +91,7 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		sub, err := relay.Subscribe(ctx, filters)
 		if err != nil {
 			log.Printf("[monitor] subscribe failed %s: %v", url, err)
+			m.setStatus(url, false, err.Error())
 			relay.Close()
 			sleepCtx(ctx, 30*time.Second)
 			continue
@@ -71,6 +109,7 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		}
 
 		log.Printf("[monitor] subscription closed on %s, reconnecting...", url)
+		m.setStatus(url, false, "disconnected")
 		relay.Close()
 		sleepCtx(ctx, 5*time.Second)
 	}

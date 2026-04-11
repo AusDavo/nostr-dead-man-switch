@@ -34,11 +34,15 @@ warning_count: 2
 # How often to evaluate the timer
 check_interval: "1h"
 
-# ── Status Page ───────────────────────────────────────────
+# ── Display ───────────────────────────────────────────────
 
 # Serve a status dashboard and /health JSON endpoint
 # Leave empty or remove to disable
 listen_addr: ":8080"
+
+# Timezone for the status page (IANA format)
+# Defaults to UTC if omitted
+timezone: "Australia/Brisbane"
 
 # ── State ─────────────────────────────────────────────────
 

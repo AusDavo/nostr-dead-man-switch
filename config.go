@@ -23,12 +23,14 @@ type Config struct {
 	CheckInterval    Duration `yaml:"check_interval"`
 	StateFile        string   `yaml:"state_file"`
 	ListenAddr       string   `yaml:"listen_addr"`
+	Timezone         string   `yaml:"timezone"`
 	Actions          []Action `yaml:"actions"`
 
 	// Derived at load time
 	watchPubkeyHex string
 	botPrivkeyHex  string
 	botPubkeyHex   string
+	location       *time.Location
 }
 
 type Duration struct {
@@ -115,6 +117,16 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.WarningInterval.Duration == 0 {
 		cfg.WarningInterval.Duration = 24 * time.Hour
+	}
+
+	if cfg.Timezone != "" {
+		loc, err := time.LoadLocation(cfg.Timezone)
+		if err != nil {
+			return nil, fmt.Errorf("invalid timezone %q: %w", cfg.Timezone, err)
+		}
+		cfg.location = loc
+	} else {
+		cfg.location = time.UTC
 	}
 
 	return &cfg, nil
