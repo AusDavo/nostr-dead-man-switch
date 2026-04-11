@@ -48,14 +48,18 @@ func executeEmail(config map[string]any) error {
 	smtpPort := config["smtp_port"]
 	smtpUser := getString(config, "smtp_user")
 	smtpPass := getString(config, "smtp_pass")
+	from := getString(config, "from")
+	if from == "" {
+		from = smtpUser
+	}
 
 	addr := fmt.Sprintf("%s:%v", smtpHost, smtpPort)
 	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
-		smtpUser, to, subject, body)
+		from, to, subject, body)
 
-	return smtp.SendMail(addr, auth, smtpUser, []string{to}, []byte(msg))
+	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg))
 }
 
 func executeWebhook(ctx context.Context, config map[string]any) error {

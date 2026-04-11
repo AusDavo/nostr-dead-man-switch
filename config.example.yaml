@@ -60,7 +60,7 @@ actions: []
   #
   # Common SMTP servers:
   #   Gmail:    smtp.gmail.com:587  (use an App Password, not your login)
-  #   Fastmail: smtp.fastmail.com:587
+  #   Fastmail: smtp.fastmail.com:587 (use an App Password; set "from" to your sending address)
   #   Outlook:  smtp-mail.outlook.com:587
   #   Proton:   127.0.0.1:1025 (via Proton Bridge)
   #
@@ -70,6 +70,7 @@ actions: []
   #     smtp_port: ${SMTP_PORT}
   #     smtp_user: "${SMTP_USER}"
   #     smtp_pass: "${SMTP_PASS}"
+  #     from: "${SMTP_FROM}"
   #     to: "spouse@example.com"
   #     subject: "Automated message from David"
   #     body: |
@@ -95,6 +96,7 @@ actions: []
   #     smtp_port: ${SMTP_PORT}
   #     smtp_user: "${SMTP_USER}"
   #     smtp_pass: "${SMTP_PASS}"
+  #     from: "${SMTP_FROM}"
   #     to: "lawyer@example.com"
   #     subject: "Dead man's switch activated — client notification"
   #     body: |

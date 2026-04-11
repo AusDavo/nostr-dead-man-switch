@@ -109,8 +109,9 @@ One action per recipient. Duplicate the block for each person (spouse, lawyer, e
   config:
     smtp_host: "${SMTP_HOST}"     # smtp.fastmail.com, smtp.gmail.com, etc.
     smtp_port: ${SMTP_PORT}       # usually 587
-    smtp_user: "${SMTP_USER}"     # your email address
+    smtp_user: "${SMTP_USER}"     # login username (e.g. you@fastmail.com)
     smtp_pass: "${SMTP_PASS}"     # app password (not your login password)
+    from: "${SMTP_FROM}"          # sending address (e.g. you@yourdomain.com)
     to: "spouse@example.com"
     subject: "Automated message from David"
     body: |
