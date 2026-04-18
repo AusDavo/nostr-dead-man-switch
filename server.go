@@ -37,11 +37,12 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 }
 
 type healthResponse struct {
-	Status         string  `json:"status"`
-	LastSeen       string  `json:"last_seen"`
-	SilenceSeconds float64 `json:"silence_seconds"`
-	WarningsSent   int     `json:"warnings_sent"`
-	Triggered      bool    `json:"triggered"`
+	Status         string   `json:"status"`
+	LastSeen       string   `json:"last_seen"`
+	SilenceSeconds float64  `json:"silence_seconds"`
+	WarningsSent   int      `json:"warnings_sent"`
+	Triggered      bool     `json:"triggered"`
+	ConfigWarnings []string `json:"config_warnings,omitempty"`
 }
 
 func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +55,10 @@ func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Triggered:      d.state.Triggered,
 	}
 	d.state.mu.Unlock()
+
+	for _, cw := range d.configWarnings() {
+		resp.ConfigWarnings = append(resp.ConfigWarnings, cw.Title)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -75,6 +80,82 @@ type statusData struct {
 	TimeRemaining string
 	Relays        []RelayStatus
 	StartedAt     string
+	Warnings      []configWarning
+}
+
+type configWarning struct {
+	Title  string
+	Detail string
+}
+
+func (d *DeadManSwitch) configWarnings() []configWarning {
+	var out []configWarning
+
+	if d.cfg.BotNsec == "" {
+		out = append(out, configWarning{
+			Title:  "Bot nsec not set",
+			Detail: "BOT_NSEC is empty. Warning DMs cannot be signed, so the check-in mechanism will fail silently at the silence threshold. Generate one with `docker compose run --rm deadman --generate-key` and set it in .env.",
+		})
+	}
+
+	if len(d.cfg.Actions) == 0 {
+		out = append(out, configWarning{
+			Title:  "No trigger actions configured",
+			Detail: "If the switch triggers, nothing will happen. Add at least one action in config.yaml.",
+		})
+	}
+
+	for i, action := range d.cfg.Actions {
+		label := fmt.Sprintf("Action %d (%s)", i+1, action.Type)
+		switch action.Type {
+		case "email":
+			if to := getString(action.Config, "to"); to != "" {
+				label = "Email → " + to
+			}
+			for _, f := range []string{"smtp_host", "smtp_user", "to", "subject", "body"} {
+				if getString(action.Config, f) == "" {
+					out = append(out, configWarning{
+						Title:  label + ": " + f + " missing",
+						Detail: "Required field is empty in config.yaml.",
+					})
+				}
+			}
+			if getString(action.Config, "smtp_pass") == "" {
+				out = append(out, configWarning{
+					Title:  label + ": SMTP password missing",
+					Detail: "smtp_pass is empty — the email will fail to authenticate. Set SMTP_PASS in .env.",
+				})
+			}
+		case "webhook":
+			if getString(action.Config, "url") == "" {
+				out = append(out, configWarning{
+					Title:  label + ": URL missing",
+					Detail: "Webhook URL is empty. Check the env var referenced in config.yaml is set in .env.",
+				})
+			}
+		case "nostr_note":
+			if getString(action.Config, "content") == "" {
+				out = append(out, configWarning{
+					Title:  label + ": content missing",
+					Detail: "Nostr note action requires a content body in config.yaml.",
+				})
+			}
+		case "nostr_event":
+			if getString(action.Config, "event_json") == "" {
+				out = append(out, configWarning{
+					Title:  label + ": event_json missing",
+					Detail: "Pre-signed event JSON is empty in config.yaml.",
+				})
+			}
+		default:
+			out = append(out, configWarning{
+				Title:  label + ": unknown type",
+				Detail: "Action type is not recognised and will be skipped at trigger time.",
+			})
+		}
+	}
+
+	return out
 }
 
 func (d *DeadManSwitch) currentStatus() string {
@@ -146,6 +227,8 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if npub, err := formatNpub(d.cfg.botPubkeyHex); err == nil {
 		data.BotNpub = truncateMiddle(npub, 20)
 	}
+
+	data.Warnings = d.configWarnings()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	statusTemplate.Execute(w, data)
@@ -312,6 +395,27 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
     gap: 0.5rem;
     margin-bottom: 0.375rem;
   }
+  .warn-card {
+    background: rgba(234,179,8,0.08);
+    border-color: rgba(234,179,8,0.4);
+  }
+  .warn-card .card-title { color: var(--yellow); }
+  .warn-row {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(234,179,8,0.15);
+  }
+  .warn-row:last-child { border-bottom: none; }
+  .warn-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--yellow);
+    margin-bottom: 0.2rem;
+  }
+  .warn-detail {
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.4;
+  }
   .relay-dot {
     width: 7px;
     height: 7px;
@@ -334,6 +438,18 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
       {{.StatusLabel}}
     </span>
   </h1>
+
+  {{if .Warnings}}
+  <div class="card warn-card">
+    <div class="card-title">Configuration Issues ({{len .Warnings}})</div>
+    {{range .Warnings}}
+    <div class="warn-row">
+      <div class="warn-title">{{.Title}}</div>
+      <div class="warn-detail">{{.Detail}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
 
   <div class="card">
     <div class="card-title">Timer</div>
