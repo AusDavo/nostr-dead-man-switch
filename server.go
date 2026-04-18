@@ -7,10 +7,14 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	nip19pkg "github.com/nbd-wtf/go-nostr/nip19"
 )
+
+var placeholderRe = regexp.MustCompile(`\[[^\]\n]+\]`)
 
 func (d *DeadManSwitch) startServer(ctx context.Context) {
 	if d.cfg.ListenAddr == "" {
@@ -91,10 +95,31 @@ type configWarning struct {
 func (d *DeadManSwitch) configWarnings() []configWarning {
 	var out []configWarning
 
+	if d.cfg.WatchPubkey == "" {
+		out = append(out, configWarning{
+			Title:  "Watch pubkey not set",
+			Detail: "watch_pubkey is empty. The switch has nothing to monitor and will trigger as soon as silence_threshold elapses.",
+		})
+	}
+
 	if d.cfg.BotNsec == "" {
 		out = append(out, configWarning{
 			Title:  "Bot nsec not set",
 			Detail: "BOT_NSEC is empty. Warning DMs cannot be signed, so the check-in mechanism will fail silently at the silence threshold. Generate one with `docker compose run --rm deadman --generate-key` and set it in .env.",
+		})
+	}
+
+	if len(d.cfg.Relays) == 0 {
+		out = append(out, configWarning{
+			Title:  "No relays configured",
+			Detail: "Without relays there is nothing to monitor and nowhere to send warning DMs.",
+		})
+	}
+
+	if d.cfg.SilenceThreshold.Duration == 0 {
+		out = append(out, configWarning{
+			Title:  "Silence threshold not set",
+			Detail: "silence_threshold is 0 — the switch treats any gap as silent and will trigger immediately at the next check.",
 		})
 	}
 
@@ -125,6 +150,37 @@ func (d *DeadManSwitch) configWarnings() []configWarning {
 					Title:  label + ": SMTP password missing",
 					Detail: "smtp_pass is empty — the email will fail to authenticate. Set SMTP_PASS in .env.",
 				})
+			}
+
+			haystack := getString(action.Config, "subject") + "\n" + getString(action.Config, "body")
+			if matches := placeholderRe.FindAllString(haystack, -1); len(matches) > 0 {
+				seen := map[string]bool{}
+				unique := []string{}
+				for _, m := range matches {
+					if !seen[m] {
+						seen[m] = true
+						unique = append(unique, m)
+					}
+				}
+				out = append(out, configWarning{
+					Title:  label + ": unfilled template placeholders",
+					Detail: "Email subject/body contains bracketed placeholders that will be sent literally to the recipient: " + strings.Join(unique, ", ") + ". Fill them in or remove them.",
+				})
+			}
+
+			for _, f := range []string{"to", "from", "smtp_user"} {
+				v := strings.ToLower(getString(action.Config, f))
+				if v == "" {
+					continue
+				}
+				if strings.Contains(v, "example.com") || strings.Contains(v, "example.org") ||
+					strings.Contains(v, "yourdomain") || strings.HasPrefix(v, "you@") ||
+					strings.HasPrefix(v, "spouse@") {
+					out = append(out, configWarning{
+						Title:  label + ": " + f + " looks like a template value",
+						Detail: "Field still contains a template example (" + v + "). Replace with a real address.",
+					})
+				}
 			}
 		case "webhook":
 			if getString(action.Config, "url") == "" {
