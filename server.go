@@ -211,6 +211,7 @@ type statusData struct {
 	Relays        []RelayStatus
 	StartedAt     string
 	Warnings      []configWarning
+	LoggedIn      bool
 }
 
 type configWarning struct {
@@ -411,6 +412,9 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data.Warnings = d.configWarnings()
+	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
+		data.LoggedIn = true
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	statusTemplate.Execute(w, data)
@@ -692,7 +696,7 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 
   <div class="footer">
     Running since {{.StartedAt}}<br>
-    <a href="/health">/health</a> endpoint available
+    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a>{{else}}<a href="/login">sign in</a>{{end}}
   </div>
 </div>
 <script>setTimeout(()=>location.reload(), 60000)</script>
