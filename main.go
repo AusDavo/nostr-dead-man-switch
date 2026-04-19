@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -16,6 +17,7 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	genKey := flag.Bool("generate-key", false, "generate a new bot keypair and exit")
+	resetSession := flag.Bool("reset-session", false, "rotate the dashboard session secret (invalidates all logins) and exit")
 	flag.Parse()
 
 	if *genKey {
@@ -26,6 +28,15 @@ func main() {
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	if *resetSession {
+		path := filepath.Join(filepath.Dir(cfg.StateFile), "session_secret")
+		if err := rotateSessionSecret(path); err != nil {
+			log.Fatalf("Failed to rotate session secret: %v", err)
+		}
+		fmt.Printf("Session secret rotated. All existing dashboard sessions are invalidated.\nSecret file: %s\n", path)
+		return
 	}
 
 	state, err := LoadState(cfg.StateFile)

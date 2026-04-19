@@ -7,17 +7,20 @@ import (
 )
 
 type DeadManSwitch struct {
-	cfg       *Config
-	state     *State
-	monitor   *Monitor
-	startedAt time.Time
+	cfg        *Config
+	state      *State
+	monitor    *Monitor
+	sessions   *sessionManager
+	challenges *challengeStore
+	startedAt  time.Time
 }
 
 func NewDeadManSwitch(cfg *Config, state *State) *DeadManSwitch {
 	return &DeadManSwitch{
-		cfg:     cfg,
-		state:   state,
-		monitor: NewMonitor(cfg),
+		cfg:        cfg,
+		state:      state,
+		monitor:    NewMonitor(cfg),
+		challenges: newChallengeStore(),
 	}
 }
 

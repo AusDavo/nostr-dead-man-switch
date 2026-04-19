@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	nip19pkg "github.com/nbd-wtf/go-nostr/nip19"
 )
+
+const loginVerifyMaxBytes = 16 * 1024
 
 var placeholderRe = regexp.MustCompile(`\[[^\]\n]+\]`)
 
@@ -21,9 +25,22 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 		return
 	}
 
+	secretPath := filepath.Join(filepath.Dir(d.cfg.StateFile), "session_secret")
+	sm, err := newSessionManager(secretPath)
+	if err != nil {
+		log.Printf("[server] session init failed: %v", err)
+		return
+	}
+	d.sessions = sm
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", d.handleStatus)
 	mux.HandleFunc("/health", d.handleHealth)
+	mux.HandleFunc("/login", d.handleLogin)
+	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
+	mux.HandleFunc("/login/verify", d.handleLoginVerify)
+	mux.HandleFunc("/logout", d.handleLogout)
+	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
 
 	srv := &http.Server{Addr: d.cfg.ListenAddr, Handler: mux}
 
@@ -38,6 +55,115 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 		<-ctx.Done()
 		srv.Shutdown(context.Background())
 	}()
+}
+
+func (d *DeadManSwitch) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.sessions == nil || d.sessions.pubkeyFromRequest(r) == "" {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (d *DeadManSwitch) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	loginTemplate.Execute(w, nil)
+}
+
+func (d *DeadManSwitch) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
+	if d.challenges == nil {
+		http.Error(w, "challenge store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	c, err := d.challenges.issue()
+	if err != nil {
+		http.Error(w, "challenge error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"challenge": c})
+}
+
+func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if d.sessions == nil || d.challenges == nil {
+		http.Error(w, "auth unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if d.cfg.watchPubkeyHex == "" {
+		http.Error(w, "watch_pubkey not configured; dashboard login disabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, loginVerifyMaxBytes))
+	if err != nil {
+		http.Error(w, "body too large", http.StatusBadRequest)
+		return
+	}
+
+	var payload struct {
+		SignedEvent json.RawMessage `json:"signedEvent"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || len(payload.SignedEvent) == 0 {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// Peek the challenge tag so we can look it up in the store.
+	var peek struct {
+		Tags [][]string `json:"tags"`
+	}
+	if err := json.Unmarshal(payload.SignedEvent, &peek); err != nil {
+		http.Error(w, "invalid event", http.StatusBadRequest)
+		return
+	}
+	var challenge string
+	for _, t := range peek.Tags {
+		if len(t) >= 2 && t[0] == "challenge" {
+			challenge = t[1]
+			break
+		}
+	}
+	if challenge == "" || !d.challenges.consume(challenge) {
+		http.Error(w, "unknown or expired challenge", http.StatusBadRequest)
+		return
+	}
+
+	pubkey, err := verifyAuthEvent(payload.SignedEvent, challenge, d.cfg.watchPubkeyHex)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	d.sessions.setCookie(w, r, d.sessions.issue(pubkey))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"redirect": "/admin"})
+}
+
+func (d *DeadManSwitch) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if d.sessions != nil {
+		d.sessions.clearCookie(w)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (d *DeadManSwitch) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	pubkey := d.sessions.pubkeyFromRequest(r)
+	npub, _ := formatNpub(pubkey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	adminTemplate.Execute(w, map[string]string{
+		"Npub":     truncateMiddle(npub, 24),
+		"FullNpub": npub,
+	})
 }
 
 type healthResponse struct {
@@ -570,5 +696,110 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
   </div>
 </div>
 <script>setTimeout(()=>location.reload(), 60000)</script>
+</body>
+</html>`))
+
+var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Dead Man's Switch</title>
+<style>
+  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; --red:#ef4444; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:2rem 1rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:2rem; max-width:420px; width:100%; }
+  h1 { font-size:1.25rem; font-weight:600; margin-bottom:0.5rem; }
+  .subtitle { color:var(--muted); font-size:0.9rem; margin-bottom:1.5rem; line-height:1.5; }
+  button { width:100%; padding:0.75rem 1rem; background:var(--accent); color:#0f1117; border:none; border-radius:0.5rem; font-size:0.95rem; font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button:disabled { opacity:0.5; cursor:not-allowed; }
+  .hint { color:var(--muted); font-size:0.8rem; margin-top:1rem; text-align:center; line-height:1.5; }
+  .hint a { color:var(--accent); }
+  .error { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.4); color:var(--red); padding:0.75rem; border-radius:0.5rem; font-size:0.85rem; margin-top:1rem; display:none; }
+  .error.show { display:block; }
+  .back { display:block; text-align:center; color:var(--muted); font-size:0.8rem; margin-top:1rem; text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Sign in</h1>
+  <p class="subtitle">Use your Nostr browser extension to sign an authentication challenge. Only the pubkey set as <code>watch_pubkey</code> can sign in.</p>
+  <button id="signin">Sign in with Nostr</button>
+  <div id="err" class="error"></div>
+  <p class="hint">Needs a NIP-07 extension such as <a href="https://getalby.com" target="_blank" rel="noopener">Alby</a>, <a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener">nos2x</a>, or nostr-keyx.</p>
+  <a href="/" class="back">← back to status</a>
+</div>
+<script>
+const btn = document.getElementById('signin');
+const errEl = document.getElementById('err');
+function showErr(msg){ errEl.textContent = msg; errEl.classList.add('show'); btn.disabled = false; btn.textContent = 'Sign in with Nostr'; }
+btn.addEventListener('click', async () => {
+  errEl.classList.remove('show');
+  if (typeof window.nostr === 'undefined') { showErr('No Nostr extension detected in this browser.'); return; }
+  btn.disabled = true; btn.textContent = 'Signing…';
+  try {
+    const cr = await fetch('/login/challenge');
+    if (!cr.ok) throw new Error('Failed to get challenge');
+    const { challenge } = await cr.json();
+    const signed = await window.nostr.signEvent({
+      kind: 22242,
+      created_at: Math.floor(Date.now()/1000),
+      tags: [['challenge', challenge]],
+      content: 'Sign in to nostr-dead-man-switch'
+    });
+    const vr = await fetch('/login/verify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ signedEvent: signed })
+    });
+    if (!vr.ok) { const t = await vr.text(); throw new Error(t || 'Verification failed'); }
+    const { redirect } = await vr.json();
+    window.location.href = redirect || '/admin';
+  } catch (e) {
+    showErr(e.message || String(e));
+  }
+});
+</script>
+</body>
+</html>`))
+
+var adminTemplate = template.Must(template.New("admin").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Dead Man's Switch</title>
+<style>
+  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
+  .container { max-width:480px; width:100%; }
+  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.5rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
+  .label { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.5rem; }
+  .value { font-family:monospace; font-size:0.9rem; word-break:break-all; }
+  .muted { color:var(--muted); font-size:0.85rem; line-height:1.5; }
+  .actions { display:flex; gap:0.5rem; margin-top:1rem; }
+  a.btn, button.btn { flex:1; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; cursor:pointer; font-family:inherit; }
+  a.btn:hover, button.btn:hover { border-color:var(--accent); color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Admin</h1>
+  <div class="card">
+    <div class="label">Signed in as</div>
+    <div class="value">{{.Npub}}</div>
+  </div>
+  <div class="card">
+    <div class="muted">Configuration editing is not wired up yet — this placeholder confirms the auth flow works end-to-end. Edit forms ship in a later PR.</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/">Status</a>
+    <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%">Sign out</button></form>
+  </div>
+</div>
 </body>
 </html>`))

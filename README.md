@@ -227,6 +227,8 @@ Then paste the full signed JSON:
 
 Set `listen_addr: ":8080"` in your config to enable a status dashboard. Shows current silence duration, timer progress, warning state, and connected relays. Auto-refreshes every 60 seconds.
 
+The status page is public and read-only. An authenticated `/admin` area (Nostr sign-in via a NIP-07 browser extension such as [Alby](https://getalby.com) or [nos2x](https://github.com/fiatjaf/nos2x)) is also available — only the key set as `watch_pubkey` can sign in. Configuration editing through this UI will ship progressively, tracked in [issue #1](https://github.com/AusDavo/nostr-dead-man-switch/issues/1). Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
+
 A `/health` JSON endpoint is also available for monitoring:
 
 ```json
@@ -249,6 +251,11 @@ docker compose run --rm deadman --generate-key
 ```
 
 Use a dedicated keypair for the bot. Do **not** use your main nsec.
+
+## Roadmap
+
+- [Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1) — edit `config.yaml` and actions through the existing status page instead of shell + YAML, so non-technical users can maintain their own switch.
+- [Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2) — one deployment serves multiple users, each with their own pubkey, bot key, and actions. Lets a trusted operator offer a dead-man switch to friends and family who can't self-host. Depends on the dashboard landing first.
 
 ## License
 

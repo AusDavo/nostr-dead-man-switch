@@ -2,5 +2,6 @@ nostr-deadman
 nostr-dead-man-switch
 config.yaml
 state.json
+session_secret
 .env
 *.exe
