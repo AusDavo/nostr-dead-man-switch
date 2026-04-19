@@ -31,6 +31,16 @@ type Config struct {
 	botPrivkeyHex  string
 	botPubkeyHex   string
 	location       *time.Location
+
+	// rawYAML holds the parsed YAML before os.ExpandEnv, so callers can
+	// detect ${VAR} references for secret masking on the /config view.
+	rawYAML map[string]any
+}
+
+// RawYAML returns the parsed config before environment-variable expansion.
+// Values containing "${VAR}" reveal where a secret was sourced from.
+func (c *Config) RawYAML() map[string]any {
+	return c.rawYAML
 }
 
 type Duration struct {
@@ -70,12 +80,18 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
 
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing raw config: %w", err)
+	}
+
 	data = []byte(os.ExpandEnv(string(data)))
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	cfg.rawYAML = raw
 
 	// Decode watch pubkey (npub or hex)
 	if strings.HasPrefix(cfg.WatchPubkey, "npub") {
