@@ -171,8 +171,8 @@ func TestWatcherSetupAlreadyConfigured(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "already set up") {
-		t.Fatalf("expected already-set-up copy; body=%s", string(body))
+	if !strings.Contains(string(body), "Reveal nsec") {
+		t.Fatalf("expected reveal-nsec affordance on already-set-up page; body=%s", string(body))
 	}
 	if strings.Contains(string(body), `action="/admin/watcher/generate"`) {
 		t.Fatalf("should not offer generate form when already set up")

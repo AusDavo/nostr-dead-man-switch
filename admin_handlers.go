@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -43,6 +44,7 @@ type watcherSetupData struct {
 	FullNpub     string
 	CSRF         string
 	AlreadySetup bool
+	WatcherNpub  string // bot pubkey in npub form, always populated when AlreadySetup
 }
 
 type watcherGeneratedData struct {
@@ -82,6 +84,13 @@ func (d *DeadManSwitch) handleWatcherSetup(w http.ResponseWriter, r *http.Reques
 		FullNpub:     npub,
 		CSRF:         d.sessions.issueCSRFToken(pubkey),
 		AlreadySetup: store.HasSealedNsec(npub),
+	}
+	if data.AlreadySetup {
+		if uc, err := store.LoadConfig(npub); err == nil && uc != nil {
+			if botNpub, err := nip19.EncodePublicKey(uc.WatcherPubkeyHex); err == nil {
+				data.WatcherNpub = botNpub
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -139,6 +148,130 @@ func (d *DeadManSwitch) handleWatcherGenerate(w http.ResponseWriter, r *http.Req
 		Nsec:     nsec,
 		Pubnpub:  botNpub,
 	})
+}
+
+const watcherRevealMaxBytes = 16 * 1024
+
+// handleWatcherRevealChallenge issues a fresh challenge for the
+// reveal-nsec flow. It's a separate challenge from /login/challenge so a
+// stolen session cookie alone can't unseal — the holder must also sign a
+// fresh NIP-07 event with the session pubkey's key material.
+func (d *DeadManSwitch) handleWatcherRevealChallenge(w http.ResponseWriter, r *http.Request) {
+	if !d.cfg.FederationV1 {
+		http.Error(w, "federation-only", http.StatusServiceUnavailable)
+		return
+	}
+	if d.challenges == nil {
+		http.Error(w, "challenge store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	c, err := d.challenges.issue()
+	if err != nil {
+		http.Error(w, "challenge error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{"challenge": c})
+}
+
+// handleWatcherReveal verifies a signed challenge from the session
+// pubkey and returns the unsealed nsec as JSON. Both gates are required:
+// CSRF (cookie-bound) and a fresh NIP-07 signature (key-bound). Either
+// alone is insufficient.
+func (d *DeadManSwitch) handleWatcherReveal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !d.cfg.FederationV1 {
+		http.Error(w, "federation-only", http.StatusServiceUnavailable)
+		return
+	}
+	if d.sessions == nil || d.challenges == nil || d.registry == nil {
+		http.Error(w, "reveal unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	pubkey := d.sessions.pubkeyFromRequest(r)
+	if pubkey == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	token := r.Header.Get("X-CSRF-Token")
+	if token == "" || !d.sessions.verifyCSRFToken(pubkey, token) {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return
+	}
+	npub, err := formatNpub(pubkey)
+	if err != nil {
+		http.Error(w, "bad session pubkey", http.StatusInternalServerError)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, watcherRevealMaxBytes))
+	if err != nil {
+		http.Error(w, "body too large", http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		SignedEvent json.RawMessage `json:"signedEvent"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || len(payload.SignedEvent) == 0 {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	var peek struct {
+		Tags [][]string `json:"tags"`
+	}
+	if err := json.Unmarshal(payload.SignedEvent, &peek); err != nil {
+		http.Error(w, "invalid event", http.StatusBadRequest)
+		return
+	}
+	var challenge string
+	for _, t := range peek.Tags {
+		if len(t) >= 2 && t[0] == "challenge" {
+			challenge = t[1]
+			break
+		}
+	}
+	if challenge == "" || !d.challenges.consume(challenge) {
+		http.Error(w, "unknown or expired challenge", http.StatusBadRequest)
+		return
+	}
+	// Tight binding: signer must be exactly the session pubkey. This blocks
+	// cross-account reveal attempts even if the attacker has a whitelisted
+	// extension identity.
+	if _, err := verifyAuthEvent(payload.SignedEvent, challenge, pubkey); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	store := d.registry.Store()
+	sealer := d.registry.Sealer()
+	if store == nil || sealer == nil {
+		http.Error(w, "federation infrastructure unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	sealed, err := store.LoadSealedNsec(npub)
+	if err != nil {
+		http.Error(w, "no sealed nsec on file", http.StatusNotFound)
+		return
+	}
+	skBytes, err := sealer.Unseal(npub, sealed)
+	if err != nil {
+		http.Error(w, "unseal failed", http.StatusInternalServerError)
+		return
+	}
+	nsec, err := nip19.EncodePrivateKey(string(skBytes))
+	if err != nil {
+		http.Error(w, "nsec encoding failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	json.NewEncoder(w).Encode(map[string]string{"nsec": nsec})
 }
 
 // handleWatcherImport accepts an existing nsec, seals it, seeds a
@@ -556,10 +689,19 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   textarea:focus { outline:none; border-color:var(--accent); }
   button.primary { padding:0.6rem 1rem; border-radius:0.5rem; border:1px solid var(--accent); background:var(--accent); color:#0f1117; font-size:0.9rem; font-weight:600; cursor:pointer; font-family:inherit; width:100%; }
   button.primary:hover { filter:brightness(1.1); }
+  button.ghost { padding:0.55rem 0.9rem; border-radius:0.5rem; border:1px solid var(--accent); background:transparent; color:var(--accent); font-size:0.85rem; cursor:pointer; font-family:inherit; }
+  button.ghost:hover { background:var(--accent); color:#0f1117; }
+  button.ghost:disabled { opacity:0.55; cursor:progress; }
   .warn-banner { background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.35); color:var(--red); padding:0.75rem 1rem; border-radius:0.5rem; font-size:0.85rem; margin-bottom:1.25rem; line-height:1.5; }
   .actions { display:flex; gap:0.5rem; margin-top:1rem; }
   a.btn { flex:1; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; }
   a.btn:hover { border-color:var(--accent); color:var(--accent); }
+  .pub { font-family:monospace; font-size:0.8rem; color:var(--text); word-break:break-all; background:var(--bg); border:1px solid var(--border); border-radius:0.5rem; padding:0.6rem; user-select:all; }
+  .reveal-row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem; }
+  pre.secret { background:var(--bg); border:1px solid var(--red); border-radius:0.5rem; padding:0.75rem; margin-top:0.75rem; font-family:monospace; font-size:0.8rem; word-break:break-all; white-space:pre-wrap; user-select:all; color:var(--text); display:none; }
+  pre.secret.shown { display:block; }
+  .reveal-err { color:var(--red); font-size:0.8rem; margin-top:0.5rem; display:none; }
+  .reveal-err.shown { display:block; }
 </style>
 </head>
 <body>
@@ -570,14 +712,34 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   </h1>
   {{if .AlreadySetup}}
   <div class="card">
-    <div class="card-title">Watcher already set up</div>
+    <div class="card-title">Watcher pubkey (safe to share)</div>
     <div class="muted">
-      A sealed bot key is already on file for your npub. Use the admin dashboard to check status or edit your config.
+      This is the bot that will sign warning DMs and the final trigger event. Follow or subscribe to this npub in your Nostr client so its DMs and notes actually reach you.
     </div>
-    <div class="actions">
-      <a class="btn" href="/admin">Go to admin</a>
-      <a class="btn" href="/admin/config">Configuration</a>
+    {{if .WatcherNpub}}
+    <div class="pub" id="watcher-npub">{{.WatcherNpub}}</div>
+    <div class="reveal-row">
+      <button type="button" class="ghost" onclick="copyWatcherNpub()">Copy npub</button>
     </div>
+    {{else}}
+    <div class="muted">Watcher pubkey unavailable — your config may not have finished seeding. Try again in a moment.</div>
+    {{end}}
+  </div>
+  <div class="card">
+    <div class="card-title">Reveal watcher nsec</div>
+    <div class="muted">
+      Export the sealed bot key as an nsec — useful if you want to mirror this watcher on another service or back it up offline. You'll need to sign a fresh challenge with your Nostr extension to confirm it's really you.
+    </div>
+    <div class="reveal-row">
+      <button type="button" id="reveal-btn" class="ghost" data-csrf="{{.CSRF}}">Reveal nsec</button>
+      <button type="button" id="reveal-copy" class="ghost" style="display:none" onclick="copyRevealed()">Copy nsec</button>
+    </div>
+    <pre class="secret" id="reveal-out"></pre>
+    <div class="reveal-err" id="reveal-err"></div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin">Go to admin</a>
+    <a class="btn" href="/admin/config">Configuration</a>
   </div>
   {{else}}
   <p class="lead">
@@ -612,6 +774,64 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
     <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%;cursor:pointer;font-family:inherit">Sign out</button></form>
   </div>
 </div>
+{{if .AlreadySetup}}
+<script>
+function copyWatcherNpub(){
+  const el = document.getElementById('watcher-npub');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).catch(()=>{
+    const r = document.createRange(); r.selectNode(el);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+  });
+}
+function copyRevealed(){
+  const el = document.getElementById('reveal-out');
+  if (!el || !el.textContent) return;
+  navigator.clipboard.writeText(el.textContent.trim()).catch(()=>{
+    const r = document.createRange(); r.selectNode(el);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+  });
+}
+(function(){
+  const btn = document.getElementById('reveal-btn');
+  if (!btn) return;
+  const out = document.getElementById('reveal-out');
+  const errEl = document.getElementById('reveal-err');
+  const copyBtn = document.getElementById('reveal-copy');
+  function showErr(msg){ errEl.textContent = msg; errEl.classList.add('shown'); btn.disabled = false; btn.textContent = 'Reveal nsec'; }
+  btn.addEventListener('click', async () => {
+    errEl.classList.remove('shown'); out.classList.remove('shown'); out.textContent = '';
+    copyBtn.style.display = 'none';
+    if (typeof window.nostr === 'undefined') { showErr('No Nostr extension detected in this browser.'); return; }
+    btn.disabled = true; btn.textContent = 'Signing…';
+    try {
+      const cr = await fetch('/admin/watcher/reveal/challenge');
+      if (!cr.ok) throw new Error('Failed to get challenge');
+      const { challenge } = await cr.json();
+      const signed = await window.nostr.signEvent({
+        kind: 22242,
+        created_at: Math.floor(Date.now()/1000),
+        tags: [['challenge', challenge]],
+        content: 'Reveal watcher nsec'
+      });
+      const vr = await fetch('/admin/watcher/reveal', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'X-CSRF-Token': btn.dataset.csrf},
+        body: JSON.stringify({ signedEvent: signed })
+      });
+      if (!vr.ok) { const t = await vr.text(); throw new Error(t || 'Reveal failed'); }
+      const { nsec } = await vr.json();
+      out.textContent = nsec;
+      out.classList.add('shown');
+      copyBtn.style.display = '';
+      btn.disabled = false; btn.textContent = 'Reveal nsec';
+    } catch (e) {
+      showErr(e.message || String(e));
+    }
+  });
+})();
+</script>
+{{end}}
 </body>
 </html>`))
 

@@ -56,6 +56,8 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
 	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
 	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
+	mux.HandleFunc("/admin/watcher/reveal/challenge", d.requireAuth(d.handleWatcherRevealChallenge))
+	mux.HandleFunc("/admin/watcher/reveal", d.requireAuth(d.handleWatcherReveal))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 	mux.HandleFunc("/admin/config/test-action", d.requireAuth(d.handleAdminConfigTestAction))
 
