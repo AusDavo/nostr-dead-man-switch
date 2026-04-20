@@ -1,13 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip04"
 	"github.com/nbd-wtf/go-nostr/nip44"
 )
+
+// selfDMInbox is the output channel type for subscribeSelfDMs. It is
+// buffered and never closed by the subscriber; callers terminate the
+// subscription by cancelling the ctx passed to subscribeSelfDMs.
+type selfDMInbox <-chan *nostr.Event
 
 // encryptSelfDM builds a kind-4 event whose content is a NIP-44
 // ciphertext of payload, sealed with a conversation key derived from
@@ -85,4 +92,91 @@ func selfDMFilter(watcherPubHex string, since *nostr.Timestamp, limit int) nostr
 		f.Since = since
 	}
 	return f
+}
+
+// querySelfDMs issues a one-shot QuerySync against each relay and merges
+// the results, deduping by event id. Per-relay failures are logged but
+// do not fail the whole call — config propagation should survive one or
+// more unreachable relays. Ctx cancellation aborts in-flight work.
+func querySelfDMs(ctx context.Context, relays []string, watcherPubHex string,
+	since *nostr.Timestamp, limit int) ([]*nostr.Event, error) {
+	filter := selfDMFilter(watcherPubHex, since, limit)
+	seen := make(map[string]bool)
+	var merged []*nostr.Event
+	for _, url := range relays {
+		if ctx.Err() != nil {
+			return merged, ctx.Err()
+		}
+		relay, err := nostr.RelayConnect(ctx, url)
+		if err != nil {
+			log.Printf("[selfdm] query connect failed %s: %v", url, err)
+			continue
+		}
+		events, err := relay.QuerySync(ctx, filter)
+		relay.Close()
+		if err != nil {
+			log.Printf("[selfdm] query failed %s: %v", url, err)
+			continue
+		}
+		for _, ev := range events {
+			if seen[ev.ID] {
+				continue
+			}
+			seen[ev.ID] = true
+			merged = append(merged, ev)
+		}
+	}
+	return merged, nil
+}
+
+// subscribeSelfDMs starts one goroutine per relay that reconnects on
+// disconnect and pushes received events onto a single buffered channel.
+// Runs until ctx is Done; the returned channel is never closed. Mirrors
+// the reconnect cadence of Monitor.subscribeRelay (30s / 5s backoff)
+// with a filter specific to self-DMs.
+func subscribeSelfDMs(ctx context.Context, relays []string, watcherPubHex string,
+	since nostr.Timestamp) (selfDMInbox, error) {
+	out := make(chan *nostr.Event, 64)
+	for _, url := range relays {
+		go subscribeSelfDMRelay(ctx, url, watcherPubHex, since, out)
+	}
+	return (selfDMInbox)(out), nil
+}
+
+func subscribeSelfDMRelay(ctx context.Context, url string, watcherPubHex string,
+	since nostr.Timestamp, out chan<- *nostr.Event) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		relay, err := nostr.RelayConnect(ctx, url)
+		if err != nil {
+			log.Printf("[selfdm] connect failed %s: %v", url, err)
+			sleepCtx(ctx, 30*time.Second)
+			continue
+		}
+		sub, err := relay.Subscribe(ctx, nostr.Filters{selfDMFilter(watcherPubHex, &since, 0)})
+		if err != nil {
+			log.Printf("[selfdm] subscribe failed %s: %v", url, err)
+			relay.Close()
+			sleepCtx(ctx, 5*time.Second)
+			continue
+		}
+		for ev := range sub.Events {
+			if ev.CreatedAt > since {
+				since = ev.CreatedAt
+			}
+			select {
+			case <-ctx.Done():
+				relay.Close()
+				return
+			case out <- ev:
+			default:
+				log.Printf("[selfdm] inbox full, dropping event %s", ev.ID)
+			}
+		}
+		log.Printf("[selfdm] sub closed on %s, reconnecting...", url)
+		relay.Close()
+		sleepCtx(ctx, 5*time.Second)
+	}
 }

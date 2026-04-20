@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -257,6 +259,267 @@ func TestUserWatcherReloadConfigSwapsUnderLock(t *testing.T) {
 	fx.w.evaluate(context.Background())
 	if fx.execCalls != 0 || len(fx.dmCalls) != 0 {
 		t.Fatalf("reloaded threshold ignored: exec=%d dm=%v", fx.execCalls, fx.dmCalls)
+	}
+}
+
+// fxDMEvent builds a valid self-DM event for the watcher in fx using
+// fx.w.watcherPriv/Pub. The payload is a JSON-encoded UserConfig with
+// the given updatedAt.
+func (f *watcherFixture) dmEvent(t *testing.T, updatedAt time.Time, mutate func(uc *UserConfig)) *nostr.Event {
+	t.Helper()
+	uc := *f.w.userCfg
+	uc.UpdatedAt = updatedAt
+	if mutate != nil {
+		mutate(&uc)
+	}
+	payload, err := json.Marshal(&uc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	ev, err := encryptSelfDM(f.w.watcherPriv, f.w.watcherPub, payload, updatedAt)
+	if err != nil {
+		t.Fatalf("encryptSelfDM: %v", err)
+	}
+	return ev
+}
+
+type reloadRecorder struct {
+	count atomic.Int32
+	ch    chan string
+}
+
+func newReloadRecorder() *reloadRecorder {
+	return &reloadRecorder{ch: make(chan string, 8)}
+}
+
+func (r *reloadRecorder) fn(npub string) error {
+	r.count.Add(1)
+	select {
+	case r.ch <- npub:
+	default:
+	}
+	return nil
+}
+
+func (r *reloadRecorder) waitFor(t *testing.T, d time.Duration) {
+	t.Helper()
+	select {
+	case <-r.ch:
+	case <-time.After(d):
+		t.Fatal("timeout waiting for reloadFn")
+	}
+}
+
+func TestHydrateAppliesNewer(t *testing.T) {
+	fx := newWatcherFixture(t)
+	rr := newReloadRecorder()
+	fx.w.reloadFn = rr.fn
+
+	ev := fx.dmEvent(t, time.Unix(1700001000, 0).UTC(), func(uc *UserConfig) {
+		uc.SilenceThreshold = Duration{48 * time.Hour}
+	})
+	fx.w.queryFn = func(ctx context.Context, relays []string, pub string,
+		since *nostr.Timestamp, limit int) ([]*nostr.Event, error) {
+		return []*nostr.Event{ev}, nil
+	}
+
+	if err := fx.w.hydrateConfig(context.Background()); err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+
+	onDisk, err := fx.store.LoadConfig(fx.npub)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if onDisk.SilenceThreshold.Duration != 48*time.Hour {
+		t.Fatalf("SilenceThreshold = %v, want 48h", onDisk.SilenceThreshold.Duration)
+	}
+	rr.waitFor(t, time.Second)
+}
+
+func TestHydrateSkipsAlreadyApplied(t *testing.T) {
+	fx := newWatcherFixture(t)
+	rr := newReloadRecorder()
+	fx.w.reloadFn = rr.fn
+
+	ev := fx.dmEvent(t, time.Unix(1700001000, 0).UTC(), nil)
+	fx.w.cacheMu.Lock()
+	fx.w.dmCache.Record(ev.ID, time.Unix(int64(ev.CreatedAt), 0))
+	fx.w.cacheMu.Unlock()
+
+	fx.w.queryFn = func(ctx context.Context, relays []string, pub string,
+		since *nostr.Timestamp, limit int) ([]*nostr.Event, error) {
+		return []*nostr.Event{ev}, nil
+	}
+
+	if err := fx.w.hydrateConfig(context.Background()); err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+	if _, err := fx.store.LoadConfig(fx.npub); err == nil {
+		t.Fatal("expected no config.json for already-applied event")
+	}
+	if rr.count.Load() != 0 {
+		t.Fatalf("reloadFn fired %d times, want 0", rr.count.Load())
+	}
+}
+
+func TestHydrateSkipsStale(t *testing.T) {
+	fx := newWatcherFixture(t)
+	rr := newReloadRecorder()
+	fx.w.reloadFn = rr.fn
+
+	// Seed cache with a newer LastApplied; incoming ev is older.
+	newer := time.Unix(1700005000, 0).UTC()
+	fx.w.cacheMu.Lock()
+	fx.w.dmCache.Promote("seed", newer)
+	fx.w.cacheMu.Unlock()
+
+	ev := fx.dmEvent(t, time.Unix(1700001000, 0).UTC(), nil)
+	fx.w.queryFn = func(ctx context.Context, relays []string, pub string,
+		since *nostr.Timestamp, limit int) ([]*nostr.Event, error) {
+		return []*nostr.Event{ev}, nil
+	}
+
+	if err := fx.w.hydrateConfig(context.Background()); err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+	if _, err := fx.store.LoadConfig(fx.npub); err == nil {
+		t.Fatal("expected no config.json for stale event")
+	}
+	if rr.count.Load() != 0 {
+		t.Fatalf("reloadFn fired %d times, want 0", rr.count.Load())
+	}
+}
+
+func TestInboxAppliesLive(t *testing.T) {
+	fx := newWatcherFixture(t)
+	rr := newReloadRecorder()
+	fx.w.reloadFn = rr.fn
+
+	ev := fx.dmEvent(t, time.Unix(1700002000, 0).UTC(), func(uc *UserConfig) {
+		uc.WarningCount = 5
+	})
+
+	ch := make(chan *nostr.Event, 2)
+	ch <- ev
+	fx.w.subFn = func(ctx context.Context, relays []string, pub string,
+		since nostr.Timestamp) (selfDMInbox, error) {
+		return (selfDMInbox)(ch), nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fx.w.runInbox(ctx)
+
+	rr.waitFor(t, time.Second)
+	onDisk, err := fx.store.LoadConfig(fx.npub)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if onDisk.WarningCount != 5 {
+		t.Fatalf("WarningCount = %d, want 5", onDisk.WarningCount)
+	}
+}
+
+func TestInboxSkipsDuplicate(t *testing.T) {
+	fx := newWatcherFixture(t)
+	rr := newReloadRecorder()
+	fx.w.reloadFn = rr.fn
+
+	ev := fx.dmEvent(t, time.Unix(1700003000, 0).UTC(), nil)
+	ch := make(chan *nostr.Event, 2)
+	ch <- ev
+	ch <- ev
+	fx.w.subFn = func(ctx context.Context, relays []string, pub string,
+		since nostr.Timestamp) (selfDMInbox, error) {
+		return (selfDMInbox)(ch), nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fx.w.runInbox(ctx)
+
+	rr.waitFor(t, time.Second)
+	time.Sleep(50 * time.Millisecond) // let the second event drain
+	if got := rr.count.Load(); got != 1 {
+		t.Fatalf("reloadFn fired %d times, want 1", got)
+	}
+}
+
+func TestPublishConfigDMRoundTrip(t *testing.T) {
+	fx := newWatcherFixture(t)
+
+	var captured nostr.Event
+	fx.w.publishFn = func(ctx context.Context, relays []string, ev nostr.Event) error {
+		captured = ev
+		return nil
+	}
+
+	uc := *fx.w.userCfg
+	uc.WarningCount = 7
+	uc.UpdatedAt = time.Time{} // PublishConfigDM assigns
+
+	got, err := fx.w.PublishConfigDM(context.Background(), &uc)
+	if err != nil {
+		t.Fatalf("PublishConfigDM: %v", err)
+	}
+	if got.ID != captured.ID {
+		t.Fatalf("captured ID = %q, want %q", captured.ID, got.ID)
+	}
+
+	payload, _, err := decryptSelfDM(fx.w.watcherPriv, fx.w.watcherPub, &captured)
+	if err != nil {
+		t.Fatalf("decryptSelfDM: %v", err)
+	}
+	var back UserConfig
+	if err := json.Unmarshal(payload, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.WarningCount != 7 {
+		t.Fatalf("round-trip WarningCount = %d, want 7", back.WarningCount)
+	}
+	if back.SubjectNpub != fx.npub {
+		t.Fatalf("SubjectNpub = %q", back.SubjectNpub)
+	}
+
+	onDisk, err := fx.store.LoadConfig(fx.npub)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !onDisk.UpdatedAt.Equal(uc.UpdatedAt) {
+		t.Fatalf("on-disk UpdatedAt = %v, want %v", onDisk.UpdatedAt, uc.UpdatedAt)
+	}
+
+	fx.w.cacheMu.Lock()
+	defer fx.w.cacheMu.Unlock()
+	if fx.w.dmCache.LastAppliedEventID != got.ID {
+		t.Fatalf("cache LastAppliedEventID = %q", fx.w.dmCache.LastAppliedEventID)
+	}
+}
+
+func TestPublishConfigDMMonotonic(t *testing.T) {
+	fx := newWatcherFixture(t)
+	fx.w.publishFn = func(ctx context.Context, relays []string, ev nostr.Event) error { return nil }
+
+	// Fixture clock: time at fx.now. Seed cache LastApplied = now + 10s.
+	future := fx.nowFn().Add(10 * time.Second)
+	fx.w.cacheMu.Lock()
+	fx.w.dmCache.Promote("seed", future)
+	fx.w.cacheMu.Unlock()
+
+	uc := *fx.w.userCfg
+	uc.UpdatedAt = time.Time{}
+
+	ev, err := fx.w.PublishConfigDM(context.Background(), &uc)
+	if err != nil {
+		t.Fatalf("PublishConfigDM: %v", err)
+	}
+	want := future.Add(time.Second)
+	if !uc.UpdatedAt.Equal(want) {
+		t.Fatalf("UpdatedAt = %v, want %v", uc.UpdatedAt, want)
+	}
+	if int64(ev.CreatedAt) != want.Unix() {
+		t.Fatalf("ev.CreatedAt = %d, want %d", ev.CreatedAt, want.Unix())
 	}
 }
 

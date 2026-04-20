@@ -92,6 +92,7 @@ func (r *Registry) defaultNewWatcher(npub string) (supervisedWatcher, *UserWatch
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("registry: building watcher for %s: %w", npub, err)
 	}
+	w.reloadFn = r.Reload
 	return w, w, uc, nil
 }
 

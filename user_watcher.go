@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,6 +23,20 @@ type userWatcherExecActions func(ctx context.Context, host *HostConfig, uc *User
 
 type userWatcherSendDM func(ctx context.Context, host *HostConfig, uc *UserConfig,
 	watcherPrivHex, watcherPubHex, subjectPubHex string, warningNum int) error
+
+// userWatcherPublish is the test seam for publishToRelays. PublishConfigDM
+// calls it instead of the package function so tests can capture events
+// without bringing up real relays.
+type userWatcherPublish func(ctx context.Context, relays []string, ev nostr.Event) error
+
+// userWatcherQueryFn / userWatcherSubFn are test seams for the relay-IO
+// helpers in nip44_selfdm.go. Defaulted to the real implementations in
+// NewUserWatcher; tests overwrite with canned channels/slices.
+type userWatcherQueryFn func(ctx context.Context, relays []string, watcherPubHex string,
+	since *nostr.Timestamp, limit int) ([]*nostr.Event, error)
+
+type userWatcherSubFn func(ctx context.Context, relays []string, watcherPubHex string,
+	since nostr.Timestamp) (selfDMInbox, error)
 
 // WatcherSnapshot is an instantaneous, read-only view of a watcher for
 // the status endpoints (wired up in #8).
@@ -51,9 +68,17 @@ type UserWatcher struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	cacheMu  sync.Mutex // guards dmCache (separate from mu to avoid lock-ordering with ReloadConfig)
+	dmCache  *ConfigDMCache
+
+	reloadFn func(npub string) error // registry.Reload; may be nil in tests
+
 	now         func() time.Time
 	execActions userWatcherExecActions
 	sendDM      userWatcherSendDM
+	publishFn   userWatcherPublish
+	queryFn     userWatcherQueryFn
+	subFn       userWatcherSubFn
 }
 
 // NewUserWatcher validates the UserConfig, loads state from the store,
@@ -86,6 +111,11 @@ func NewUserWatcher(host *HostConfig, uc *UserConfig, watcherPrivHex string,
 		return nil, fmt.Errorf("user_watcher: loading state: %w", err)
 	}
 
+	cache, err := store.LoadDMCache(uc.SubjectNpub)
+	if err != nil {
+		return nil, fmt.Errorf("user_watcher: loading dm cache: %w", err)
+	}
+
 	relays := uc.Relays
 	if len(relays) == 0 {
 		relays = host.Relays
@@ -100,10 +130,14 @@ func NewUserWatcher(host *HostConfig, uc *UserConfig, watcherPrivHex string,
 		monitor:     NewMonitor(relays, subjectPub),
 		state:       state,
 		userCfg:     uc,
+		dmCache:     cache,
 		done:        make(chan struct{}),
 		now:         time.Now,
 		execActions: ExecuteActions,
 		sendDM:      SendWarningDM,
+		publishFn:   publishToRelays,
+		queryFn:     querySelfDMs,
+		subFn:       subscribeSelfDMs,
 	}, nil
 }
 
@@ -155,6 +189,11 @@ func (w *UserWatcher) Run(ctx context.Context) error {
 
 	log.Printf("[watcher %s] threshold=%s warning_interval=%s warnings=%d check=%s",
 		npub, threshold, warnInterval, warnCount, checkInterval)
+
+	if err := w.hydrateConfig(runCtx); err != nil {
+		log.Printf("[watcher %s] hydrate: %v", npub, err)
+	}
+	go w.runInbox(runCtx)
 
 	w.state.mu.Lock()
 	since := w.state.LastSeen
@@ -268,11 +307,223 @@ func (w *UserWatcher) Stop() {
 // ReloadConfig swaps the active UserConfig. Callers are responsible for
 // handling relay changes: Registry.Reload compares the old and new
 // Relays and restarts the watcher when they differ, because Monitor
-// subscriptions are bound at Start time.
+// subscriptions are bound at Start time. Also refreshes the in-memory
+// dmCache from disk so a Reload-after-apply doesn't keep a stale cache.
 func (w *UserWatcher) ReloadConfig(uc *UserConfig) {
 	w.mu.Lock()
 	w.userCfg = uc
+	npub := uc.SubjectNpub
 	w.mu.Unlock()
+
+	if cache, err := w.store.LoadDMCache(npub); err == nil {
+		w.cacheMu.Lock()
+		w.dmCache = cache
+		w.cacheMu.Unlock()
+	} else {
+		log.Printf("[watcher %s] reload dm cache: %v", npub, err)
+	}
+}
+
+// hydrateConfig runs once at the start of Run. It queries self-DMs
+// across the watcher's effective relays, applies any new payloads in
+// ascending created_at order, and triggers a registry reload if the
+// local config changed. Best-effort: per-event failures are logged but
+// do not abort the hydrate.
+func (w *UserWatcher) hydrateConfig(ctx context.Context) error {
+	w.mu.RLock()
+	npub := w.userCfg.SubjectNpub
+	w.mu.RUnlock()
+
+	w.cacheMu.Lock()
+	var since *nostr.Timestamp
+	if !w.dmCache.LastAppliedCreatedAt.IsZero() {
+		ts := nostr.Timestamp(w.dmCache.LastAppliedCreatedAt.Unix())
+		since = &ts
+	}
+	w.cacheMu.Unlock()
+
+	relays := w.effectiveRelays()
+	events, err := w.queryFn(ctx, relays, w.watcherPub, since, 20)
+	if err != nil {
+		return fmt.Errorf("hydrateConfig: query: %w", err)
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].CreatedAt < events[j].CreatedAt })
+
+	applied := false
+	for _, ev := range events {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if w.applyOne(ev, npub, "hydrate") {
+			applied = true
+		}
+	}
+
+	if applied {
+		if uc, err := w.store.LoadConfig(npub); err == nil {
+			w.mu.Lock()
+			w.userCfg = uc
+			w.mu.Unlock()
+		}
+		if w.reloadFn != nil {
+			go func() {
+				if err := w.reloadFn(npub); err != nil {
+					log.Printf("[watcher %s] reload after hydrate: %v", npub, err)
+				}
+			}()
+		}
+	}
+	return nil
+}
+
+// runInbox subscribes to live self-DMs and applies each one as it
+// arrives. Exits when ctx is Done. The goroutine may briefly outlive
+// Run during a Stop+Start triggered from reloadFn — that's fine because
+// it strictly selects on ctx.Done and does no further work after.
+func (w *UserWatcher) runInbox(ctx context.Context) {
+	w.mu.RLock()
+	npub := w.userCfg.SubjectNpub
+	w.mu.RUnlock()
+
+	w.cacheMu.Lock()
+	since := nostr.Timestamp(w.now().Unix())
+	if last := w.dmCache.LastAppliedCreatedAt; !last.IsZero() && nostr.Timestamp(last.Unix()) > since {
+		since = nostr.Timestamp(last.Unix())
+	}
+	w.cacheMu.Unlock()
+
+	relays := w.effectiveRelays()
+	inbox, err := w.subFn(ctx, relays, w.watcherPub, since)
+	if err != nil {
+		log.Printf("[watcher %s] inbox subscribe: %v", npub, err)
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-inbox:
+			if ev == nil {
+				continue
+			}
+			if w.applyOne(ev, npub, "inbox") && w.reloadFn != nil {
+				go func() {
+					if err := w.reloadFn(npub); err != nil {
+						log.Printf("[watcher %s] reload after inbox: %v", npub, err)
+					}
+				}()
+			}
+		}
+	}
+}
+
+// applyOne is the shared decrypt/apply path for hydrate and inbox. It
+// returns true iff the event produced a config change on disk. Caller
+// is responsible for any follow-on reloadFn call.
+func (w *UserWatcher) applyOne(ev *nostr.Event, npub, source string) bool {
+	w.cacheMu.Lock()
+	defer w.cacheMu.Unlock()
+
+	if w.dmCache.Has(ev.ID) {
+		return false
+	}
+	payload, _, err := decryptSelfDM(w.watcherPriv, w.watcherPub, ev)
+	if err != nil {
+		w.dmCache.Record(ev.ID, time.Unix(int64(ev.CreatedAt), 0))
+		_ = w.store.SaveDMCache(npub, w.dmCache)
+		log.Printf("[watcher %s] %s decrypt %s: %v", npub, source, ev.ID, err)
+		return false
+	}
+	_, err = applyInboundDM(w.store, npub, w.dmCache, ev, payload)
+	if err != nil {
+		if !errors.Is(err, ErrStaleDM) && !errors.Is(err, ErrAlreadyApplied) {
+			log.Printf("[watcher %s] %s apply %s: %v", npub, source, ev.ID, err)
+		}
+		return false
+	}
+	log.Printf("[watcher %s] %s applied inbound DM %s", npub, source, ev.ID)
+	return true
+}
+
+// PublishConfigDM seals uc as a kind-4 + NIP-44 self-DM and publishes
+// it to the watcher's effective relays. UpdatedAt is assigned here to
+// ensure strict monotonicity against the local cache, so a burst of
+// dashboard saves can't race into a tie. On success, the new config is
+// persisted locally and the published event id is recorded in the cache
+// so our own inbox subscription ignores it.
+func (w *UserWatcher) PublishConfigDM(ctx context.Context, uc *UserConfig) (*nostr.Event, error) {
+	w.mu.RLock()
+	npub := w.userCfg.SubjectNpub
+	w.mu.RUnlock()
+	uc.SubjectNpub = npub
+
+	w.cacheMu.Lock()
+	now := w.now()
+	next := w.dmCache.LastAppliedCreatedAt.Add(time.Second)
+	if next.After(now) {
+		uc.UpdatedAt = next
+	} else {
+		uc.UpdatedAt = now
+	}
+	w.cacheMu.Unlock()
+
+	if err := uc.Validate(); err != nil {
+		return nil, fmt.Errorf("PublishConfigDM: validate: %w", err)
+	}
+
+	payload, err := json.Marshal(uc)
+	if err != nil {
+		return nil, fmt.Errorf("PublishConfigDM: marshal: %w", err)
+	}
+	ev, err := encryptSelfDM(w.watcherPriv, w.watcherPub, payload, uc.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	relays := w.effectiveRelaysFor(uc)
+	if err := w.publishFn(ctx, relays, *ev); err != nil {
+		return nil, fmt.Errorf("PublishConfigDM: publish: %w", err)
+	}
+
+	w.cacheMu.Lock()
+	w.dmCache.Record(ev.ID, uc.UpdatedAt)
+	w.dmCache.Promote(ev.ID, uc.UpdatedAt)
+	if err := w.store.SaveDMCache(npub, w.dmCache); err != nil {
+		log.Printf("[watcher %s] publish save cache: %v", npub, err)
+	}
+	w.cacheMu.Unlock()
+
+	if err := w.store.SaveConfig(npub, uc); err != nil {
+		return nil, fmt.Errorf("PublishConfigDM: save config: %w", err)
+	}
+	w.mu.Lock()
+	w.userCfg = uc
+	w.mu.Unlock()
+
+	return ev, nil
+}
+
+func (w *UserWatcher) effectiveRelays() []string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if len(w.userCfg.Relays) > 0 {
+		return append([]string(nil), w.userCfg.Relays...)
+	}
+	if w.host != nil {
+		return append([]string(nil), w.host.Relays...)
+	}
+	return nil
+}
+
+func (w *UserWatcher) effectiveRelaysFor(uc *UserConfig) []string {
+	if uc != nil && len(uc.Relays) > 0 {
+		return append([]string(nil), uc.Relays...)
+	}
+	if w.host != nil {
+		return append([]string(nil), w.host.Relays...)
+	}
+	return nil
 }
 
 // Snapshot returns the current public-facing view of the watcher.
