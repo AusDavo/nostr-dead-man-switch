@@ -1,0 +1,353 @@
+package main
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip19"
+)
+
+// watcherSetupFixture wires a full federation-mode dashboard using the
+// real Registry factory (Sealer + UserStore + Whitelist). Unlike
+// newFederationDashboard / adminConfigFixture this is the path actually
+// exercised by the bootstrap flow, since handleWatcherGenerate and
+// handleWatcherImport need to call registry.Start(npub) successfully.
+type watcherSetupFixture struct {
+	srv     *httptest.Server
+	d       *DeadManSwitch
+	store   *UserStore
+	sealer  *Sealer
+	reg     *Registry
+	userPk  string
+	userSk  string
+	userNpub string
+}
+
+func newWatcherSetupFixture(t *testing.T) *watcherSetupFixture {
+	t.Helper()
+	dir := t.TempDir()
+
+	sealer := testSealer(t)
+	store, err := NewUserStore(filepath.Join(dir, "users"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wl, err := LoadWhitelist(filepath.Join(dir, "whitelist.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	userSk := nostr.GeneratePrivateKey()
+	userPk, _ := nostr.GetPublicKey(userSk)
+	userNpub, err := nip19.EncodePublicKey(userPk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wl.Add(userNpub, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-routable relay so the Monitor spawned by registry.Start
+	// doesn't hit the network. Each goroutine will cycle on dial
+	// errors; t.Cleanup below stops them.
+	host := &HostConfig{
+		Relays:   []string{"wss://127.0.0.1:1"},
+		StateDir: dir,
+	}
+	reg := NewRegistry(host, store, wl, sealer, context.Background())
+	t.Cleanup(reg.StopAll)
+
+	cfg := &Config{
+		FederationV1: true,
+		Relays:       host.Relays,
+		StateDir:     dir,
+		StateFile:    filepath.Join(dir, "state.json"),
+	}
+	sm, err := newSessionManager(filepath.Join(dir, "session_secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &DeadManSwitch{
+		cfg:        cfg,
+		sessions:   sm,
+		challenges: &challengeStore{m: map[string]time.Time{}},
+		registry:   reg,
+		startedAt:  time.Now(),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", d.handleLogin)
+	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
+	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
+	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	return &watcherSetupFixture{
+		srv:      srv,
+		d:        d,
+		store:    store,
+		sealer:   sealer,
+		reg:      reg,
+		userPk:   userPk,
+		userSk:   userSk,
+		userNpub: userNpub,
+	}
+}
+
+func (fx *watcherSetupFixture) sessionCookie() *http.Cookie {
+	return &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(fx.userPk)}
+}
+
+func (fx *watcherSetupFixture) csrf() string {
+	return fx.d.sessions.issueCSRFToken(fx.userPk)
+}
+
+func TestWatcherSetupUnauthedRedirects(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Get(fx.srv.URL + "/admin/watcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/login" {
+		t.Fatalf("Location = %q, want /login", loc)
+	}
+}
+
+func TestWatcherSetupAuthedShowsForms(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/watcher", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, string(body))
+	}
+	s := string(body)
+	if !strings.Contains(s, `action="/admin/watcher/generate"`) {
+		t.Fatalf("missing generate form; body=%s", s)
+	}
+	if !strings.Contains(s, `action="/admin/watcher/import"`) {
+		t.Fatalf("missing import form")
+	}
+	if !strings.Contains(s, truncateMiddle(fx.userNpub, 24)) {
+		t.Fatalf("page missing (truncated) user npub")
+	}
+}
+
+func TestWatcherSetupAlreadyConfigured(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	if err := fx.store.CreateUser(fx.userNpub); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.SaveSealedNsec(fx.userNpub, "sentinel"); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/watcher", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "already set up") {
+		t.Fatalf("expected already-set-up copy; body=%s", string(body))
+	}
+	if strings.Contains(string(body), `action="/admin/watcher/generate"`) {
+		t.Fatalf("should not offer generate form when already set up")
+	}
+}
+
+func TestWatcherGeneratePersistsAndStarts(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/generate",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "nsec1") {
+		t.Fatalf("response missing nsec1 string")
+	}
+	if !fx.store.HasSealedNsec(fx.userNpub) {
+		t.Fatal("sealed nsec was not persisted")
+	}
+	uc, err := fx.store.LoadConfig(fx.userNpub)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if uc.WatcherPubkeyHex == "" {
+		t.Fatal("UserConfig missing WatcherPubkeyHex after generate")
+	}
+	// registry.Start() should have been called.
+	if !fx.reg.IsRunning(fx.userNpub) {
+		t.Fatal("registry.IsRunning should be true after generate")
+	}
+}
+
+func TestWatcherGenerateSecondCallConflicts(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	post := func() *http.Response {
+		form := url.Values{"csrf_token": {fx.csrf()}}
+		req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/generate",
+			strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(fx.sessionCookie())
+		resp, err := fx.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp := post()
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first generate status = %d", resp.StatusCode)
+	}
+
+	resp = post()
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second generate status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func TestWatcherGenerateRejectsBadCSRF(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	form := url.Values{"csrf_token": {"not-a-real-token"}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/generate",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if fx.store.HasSealedNsec(fx.userNpub) {
+		t.Fatal("CSRF failure must not persist any state")
+	}
+}
+
+func TestWatcherImportBadNsec(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	form := url.Values{"csrf_token": {fx.csrf()}, "nsec": {"not a real nsec"}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/import",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if fx.store.HasSealedNsec(fx.userNpub) {
+		t.Fatal("failed import must not persist state")
+	}
+}
+
+func TestWatcherImportGoodNsec(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	botSk := nostr.GeneratePrivateKey()
+	botPk, _ := nostr.GetPublicKey(botSk)
+	nsec, _ := nip19.EncodePrivateKey(botSk)
+
+	form := url.Values{"csrf_token": {fx.csrf()}, "nsec": {nsec}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/import",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin" {
+		t.Fatalf("Location = %q, want /admin", loc)
+	}
+	uc, err := fx.store.LoadConfig(fx.userNpub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uc.WatcherPubkeyHex != botPk {
+		t.Fatalf("UserConfig pubkey = %q, want %q", uc.WatcherPubkeyHex, botPk)
+	}
+	if !fx.reg.IsRunning(fx.userNpub) {
+		t.Fatal("registry should have started watcher after import")
+	}
+}
+
+func TestWatcherSetupLegacyMode(t *testing.T) {
+	// Construct a legacy-mode DeadManSwitch and assert /admin/watcher 503s.
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+
+	srv, d := testServer(t, pk)
+	defer srv.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
+	legacySrv := httptest.NewServer(mux)
+	defer legacySrv.Close()
+
+	cookie := &http.Cookie{Name: sessionCookieName, Value: d.sessions.issue(pk)}
+	req, _ := http.NewRequest("GET", legacySrv.URL+"/admin/watcher", nil)
+	req.AddCookie(cookie)
+	resp, err := legacySrv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}

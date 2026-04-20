@@ -269,6 +269,17 @@ func (r *Registry) StopAll() {
 	wg.Wait()
 }
 
+// Sealer returns the *Sealer this registry was built with. May be nil
+// in test fixtures that skip encryption.
+func (r *Registry) Sealer() *Sealer { return r.sealer }
+
+// Store returns the *UserStore this registry was built with.
+func (r *Registry) Store() *UserStore { return r.store }
+
+// Host returns the *HostConfig this registry was built with. Callers
+// use it to seed new UserConfigs with host-level defaults.
+func (r *Registry) Host() *HostConfig { return r.host }
+
 // List returns the current set of running npubs.
 func (r *Registry) List() []string {
 	r.mu.RLock()

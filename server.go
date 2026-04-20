@@ -44,6 +44,9 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
 	mux.HandleFunc("/logout", d.handleLogout)
 	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
+	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
+	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
+	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
 	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 
