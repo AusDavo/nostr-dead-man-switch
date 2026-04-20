@@ -326,6 +326,79 @@ func TestWatcherImportGoodNsec(t *testing.T) {
 	}
 }
 
+func TestAdminFederationRedirectsWhenNoWatcher(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/admin", fx.d.requireAuth(fx.d.handleAdmin))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := noRedirectClient(t, srv.Client())
+	req, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin/watcher" {
+		t.Fatalf("Location = %q, want /admin/watcher", loc)
+	}
+}
+
+func TestAdminFederationRendersHubAfterEnroll(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	// Enroll via the import flow so the fixture's Registry truly has a
+	// running watcher for this subject.
+	botSk := nostr.GeneratePrivateKey()
+	nsec, _ := nip19.EncodePrivateKey(botSk)
+	form := url.Values{"csrf_token": {fx.csrf()}, "nsec": {nsec}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/import",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := noRedirectClient(t, fx.srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("import status = %d", resp.StatusCode)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/admin", fx.d.requireAuth(fx.d.handleAdmin))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	req, _ = http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err = srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, string(body))
+	}
+	s := string(body)
+	if !strings.Contains(s, `href="/admin/config"`) {
+		t.Fatalf("hub missing /admin/config link; body=%s", s)
+	}
+	if !strings.Contains(s, "Timer") || !strings.Contains(s, "Activity") {
+		t.Fatalf("hub missing core cards; body=%s", s)
+	}
+	// Host-relay should appear in the relay card.
+	if !strings.Contains(s, "wss://127.0.0.1:1") {
+		t.Fatalf("hub missing host relay row")
+	}
+}
+
 func TestWatcherSetupLegacyMode(t *testing.T) {
 	// Construct a legacy-mode DeadManSwitch and assert /admin/watcher 503s.
 	sk := nostr.GeneratePrivateKey()

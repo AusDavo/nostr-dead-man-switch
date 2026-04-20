@@ -201,10 +201,16 @@ func (d *DeadManSwitch) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *DeadManSwitch) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	if d.cfg.FederationV1 {
+		d.handleAdminFederation(w, r)
+		return
+	}
+	// Legacy mode: no multi-tenancy, so /admin is just a thin signed-in
+	// landing page pointing to / and /config.
 	pubkey := d.sessions.pubkeyFromRequest(r)
 	npub, _ := formatNpub(pubkey)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTemplate.Execute(w, map[string]string{
+	adminLegacyTemplate.Execute(w, map[string]string{
 		"Npub":     truncateMiddle(npub, 24),
 		"FullNpub": npub,
 	})
@@ -314,7 +320,19 @@ func (d *DeadManSwitch) configWarnings() []configWarning {
 		})
 	}
 
-	for i, action := range d.cfg.Actions {
+	out = append(out, actionWarnings(d.cfg.Actions, "config.yaml")...)
+
+	return out
+}
+
+// actionWarnings inspects a slice of trigger actions and returns any
+// per-action warnings (missing required fields, template placeholders,
+// example values). Source is the human-readable origin of the actions
+// list — "config.yaml" for legacy, "your config" for federation — and
+// appears in detail strings.
+func actionWarnings(actions []Action, source string) []configWarning {
+	var out []configWarning
+	for i, action := range actions {
 		label := fmt.Sprintf("Action %d (%s)", i+1, action.Type)
 		switch action.Type {
 		case "email":
@@ -325,7 +343,7 @@ func (d *DeadManSwitch) configWarnings() []configWarning {
 				if getString(action.Config, f) == "" {
 					out = append(out, configWarning{
 						Title:  label + ": " + f + " missing",
-						Detail: "Required field is empty in config.yaml.",
+						Detail: "Required field is empty in " + source + ".",
 					})
 				}
 			}
@@ -370,21 +388,21 @@ func (d *DeadManSwitch) configWarnings() []configWarning {
 			if getString(action.Config, "url") == "" {
 				out = append(out, configWarning{
 					Title:  label + ": URL missing",
-					Detail: "Webhook URL is empty. Check the env var referenced in config.yaml is set in .env.",
+					Detail: "Webhook URL is empty. Check the env var referenced in " + source + " is set in .env.",
 				})
 			}
 		case "nostr_note":
 			if getString(action.Config, "content") == "" {
 				out = append(out, configWarning{
 					Title:  label + ": content missing",
-					Detail: "Nostr note action requires a content body in config.yaml.",
+					Detail: "Nostr note action requires a content body in " + source + ".",
 				})
 			}
 		case "nostr_event":
 			if getString(action.Config, "event_json") == "" {
 				out = append(out, configWarning{
 					Title:  label + ": event_json missing",
-					Detail: "Pre-signed event JSON is empty in config.yaml.",
+					Detail: "Pre-signed event JSON is empty in " + source + ".",
 				})
 			}
 		default:
@@ -394,7 +412,6 @@ func (d *DeadManSwitch) configWarnings() []configWarning {
 			})
 		}
 	}
-
 	return out
 }
 
@@ -949,7 +966,7 @@ btn.addEventListener('click', async () => {
 </body>
 </html>`))
 
-var adminTemplate = template.Must(template.New("admin").Parse(`<!DOCTYPE html>
+var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -978,7 +995,7 @@ var adminTemplate = template.Must(template.New("admin").Parse(`<!DOCTYPE html>
     <div class="value">{{.Npub}}</div>
   </div>
   <div class="card">
-    <div class="muted">Configuration editing is not wired up yet — this placeholder confirms the auth flow works end-to-end. Edit forms ship in a later PR.</div>
+    <div class="muted">This instance is running in legacy single-user mode. The host config is edited in config.yaml on disk; the status page and /config are read-only views of it.</div>
   </div>
   <div class="actions">
     <a class="btn" href="/">Status</a>
