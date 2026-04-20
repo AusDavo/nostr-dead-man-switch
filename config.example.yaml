@@ -216,6 +216,23 @@ actions: []
   #       - "wss://relay.nostr.band"
 
   # ────────────────────────────────────────────────────────
+  # NOSTR DM (encrypted, to a specific npub)
+  # ────────────────────────────────────────────────────────
+  # Sends a NIP-04 encrypted direct message from the bot's
+  # npub to a single recipient. Only the recipient can read it.
+  #
+  # - type: nostr_dm
+  #   config:
+  #     to_npub: "npub1…"                  # recipient's pubkey
+  #     content: |
+  #       Hey — if you're reading this, my dead man's switch has
+  #       fired. Instructions are in the shared vault under
+  #       [location]. Please proceed as we discussed.
+  #     relays:                            # optional — inherits host list if blank
+  #       - "wss://relay.damus.io"
+  #       - "wss://nos.lol"
+
+  # ────────────────────────────────────────────────────────
   # PRE-SIGNED NOSTR EVENT (published from YOUR identity)
   # ────────────────────────────────────────────────────────
   # The bot publishes an event YOU signed ahead of time with

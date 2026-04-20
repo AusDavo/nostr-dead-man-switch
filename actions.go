@@ -13,6 +13,7 @@ import (
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip04"
+	"github.com/nbd-wtf/go-nostr/nip19"
 )
 
 func ExecuteActions(ctx context.Context, host *HostConfig, uc *UserConfig,
@@ -46,6 +47,8 @@ func executeAction(ctx context.Context, actionType string, config map[string]any
 		return executeWebhook(ctx, config)
 	case "nostr_note":
 		return executeNostrNote(ctx, host, uc, watcherPrivHex, watcherPubHex, config)
+	case "nostr_dm":
+		return executeNostrDM(ctx, host, uc, watcherPrivHex, watcherPubHex, config)
 	case "nostr_event":
 		return executeNostrEvent(ctx, config)
 	default:
@@ -148,6 +151,48 @@ func executeNostrNote(ctx context.Context, host *HostConfig, uc *UserConfig,
 	}
 
 	return publishToRelays(ctx, relays, ev)
+}
+
+func executeNostrDM(ctx context.Context, host *HostConfig, uc *UserConfig,
+	watcherPrivHex, watcherPubHex string, config map[string]any) error {
+	toNpub := strings.TrimSpace(getString(config, "to_npub"))
+	content := getString(config, "content")
+	if toNpub == "" {
+		return fmt.Errorf("nostr_dm: to_npub required")
+	}
+	if content == "" {
+		return fmt.Errorf("nostr_dm: content required")
+	}
+	prefix, data, err := nip19.Decode(toNpub)
+	if err != nil || prefix != "npub" {
+		return fmt.Errorf("nostr_dm: invalid to_npub")
+	}
+	recipientHex, ok := data.(string)
+	if !ok || recipientHex == "" {
+		return fmt.Errorf("nostr_dm: invalid to_npub payload")
+	}
+
+	shared, err := nip04.ComputeSharedSecret(recipientHex, watcherPrivHex)
+	if err != nil {
+		return fmt.Errorf("computing shared secret: %w", err)
+	}
+	encrypted, err := nip04.Encrypt(content, shared)
+	if err != nil {
+		return fmt.Errorf("encrypting DM: %w", err)
+	}
+
+	ev := nostr.Event{
+		PubKey:    watcherPubHex,
+		CreatedAt: nostr.Timestamp(time.Now().Unix()),
+		Kind:      4,
+		Content:   encrypted,
+		Tags:      nostr.Tags{nostr.Tag{"p", recipientHex}},
+	}
+	if err := ev.Sign(watcherPrivHex); err != nil {
+		return fmt.Errorf("signing DM: %w", err)
+	}
+
+	return publishToRelays(ctx, resolveRelays(host, uc, config), ev)
 }
 
 func executeNostrEvent(ctx context.Context, config map[string]any) error {

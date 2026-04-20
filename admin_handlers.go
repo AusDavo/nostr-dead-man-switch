@@ -1005,6 +1005,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
           <option value="email">Email</option>
           <option value="webhook">Webhook</option>
           <option value="nostr_note">Nostr note</option>
+          <option value="nostr_dm">Nostr DM</option>
           <option value="nostr_event">Nostr event</option>
         </select>
         <div class="spacer"></div>
@@ -1037,6 +1038,14 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
       </div>
       <div class="type-fields type-nostr_note">
         <label><span class="k">Content</span><textarea data-k="content" placeholder="If you're reading this, I'm overdue. Here's what I wanted known…"></textarea></label>
+      </div>
+      <div class="type-fields type-nostr_dm">
+        <label>
+          <span class="k">Recipient npub</span>
+          <input data-k="to_npub" placeholder="npub1…">
+          <div class="muted" style="margin:0.2rem 0 0;font-size:0.7rem">NIP-04 encrypted DM from your watcher to this npub.</div>
+        </label>
+        <label><span class="k">Content</span><textarea data-k="content" placeholder="Private message for this recipient only."></textarea></label>
       </div>
       <div class="type-fields type-nostr_event">
         <label>
@@ -1143,6 +1152,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
     email: { smtp_port: 587 },
     webhook: { method: 'POST' },
     nostr_note: {},
+    nostr_dm: {},
     nostr_event: {},
   };
 
@@ -1270,6 +1280,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
       case 'email': return 'Sent — check the inbox.';
       case 'webhook': return 'Webhook responded OK.';
       case 'nostr_note': return 'Published test note to configured relays.';
+      case 'nostr_dm': return 'Encrypted DM published to configured relays.';
       case 'nostr_event': return 'Published pre-signed event.';
       default: return 'Action fired.';
     }
