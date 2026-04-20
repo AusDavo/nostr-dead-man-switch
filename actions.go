@@ -19,25 +19,37 @@ func ExecuteActions(ctx context.Context, host *HostConfig, uc *UserConfig,
 	watcherPrivHex, watcherPubHex, subjectPubHex string, actions []Action) {
 	for _, action := range actions {
 		log.Printf("[trigger] executing: %s", action.Type)
-		var err error
-		switch action.Type {
-		case "email":
-			err = executeEmail(action.Config)
-		case "webhook":
-			err = executeWebhook(ctx, action.Config)
-		case "nostr_note":
-			err = executeNostrNote(ctx, host, uc, watcherPrivHex, watcherPubHex, action.Config)
-		case "nostr_event":
-			err = executeNostrEvent(ctx, action.Config)
-		default:
+		err := executeAction(ctx, action.Type, action.Config, host, uc, watcherPrivHex, watcherPubHex)
+		switch {
+		case err == errUnknownActionType:
 			log.Printf("[trigger] unknown action type: %s", action.Type)
-			continue
-		}
-		if err != nil {
+		case err != nil:
 			log.Printf("[trigger] %s failed: %v", action.Type, err)
-		} else {
+		default:
 			log.Printf("[trigger] %s done", action.Type)
 		}
+	}
+}
+
+var errUnknownActionType = fmt.Errorf("unknown action type")
+
+// executeAction dispatches a single action by type. Shared between the
+// trigger path (ExecuteActions) and the /admin/config/test-action handler
+// so both produce identical side-effects for a given (type, config) pair.
+// Does not log the config map — keep secrets out of logs.
+func executeAction(ctx context.Context, actionType string, config map[string]any,
+	host *HostConfig, uc *UserConfig, watcherPrivHex, watcherPubHex string) error {
+	switch actionType {
+	case "email":
+		return executeEmail(config)
+	case "webhook":
+		return executeWebhook(ctx, config)
+	case "nostr_note":
+		return executeNostrNote(ctx, host, uc, watcherPrivHex, watcherPubHex, config)
+	case "nostr_event":
+		return executeNostrEvent(ctx, config)
+	default:
+		return errUnknownActionType
 	}
 }
 

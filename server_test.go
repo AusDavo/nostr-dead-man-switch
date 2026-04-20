@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -248,6 +249,7 @@ func newAdminConfigFixture(t *testing.T) *adminConfigFixture {
 	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
+	mux.HandleFunc("/admin/config/test-action", d.requireAuth(d.handleAdminConfigTestAction))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -330,6 +332,9 @@ func TestAdminConfigPublishes(t *testing.T) {
 	}
 }
 
+// TestAdminConfigAcceptsPickerDuration emulates the UI's duration picker
+// round-trip: the client serialises "30" + "d" → "30d", and the server
+// must resolve that to 30*24h on disk.
 func TestAdminConfigAcceptsPickerDuration(t *testing.T) {
 	fx := newAdminConfigFixture(t)
 
@@ -348,29 +353,26 @@ func TestAdminConfigAcceptsPickerDuration(t *testing.T) {
 	req.Header.Set("X-CSRF-Token", fx.csrfToken())
 	req.AddCookie(fx.sessionCookie())
 
-	client := noRedirectClient(t, fx.srv.Client())
-	resp, err := client.Do(req)
+	resp, err := noRedirectClient(t, fx.srv.Client()).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d body=%s, want 303", resp.StatusCode, string(body))
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
-
 	stored, err := fx.store.LoadConfig(fx.subjectNpub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.SilenceThreshold.Duration != 30*24*time.Hour {
-		t.Fatalf("stored silence_threshold = %s, want 720h", stored.SilenceThreshold.Duration)
+	if want := 30 * 24 * time.Hour; stored.SilenceThreshold.Duration != want {
+		t.Fatalf("silence_threshold = %s, want %s", stored.SilenceThreshold.Duration, want)
 	}
-	if stored.WarningInterval.Duration != 2*24*time.Hour {
-		t.Fatalf("stored warning_interval = %s, want 48h", stored.WarningInterval.Duration)
+	if want := 2 * 24 * time.Hour; stored.WarningInterval.Duration != want {
+		t.Fatalf("warning_interval = %s, want %s", stored.WarningInterval.Duration, want)
 	}
-	if stored.CheckInterval.Duration != time.Hour {
-		t.Fatalf("stored check_interval = %s, want 1h", stored.CheckInterval.Duration)
+	if want := time.Hour; stored.CheckInterval.Duration != want {
+		t.Fatalf("check_interval = %s, want %s", stored.CheckInterval.Duration, want)
 	}
 }
 
@@ -597,6 +599,181 @@ func TestAdminConfigSecretMaskPreserved(t *testing.T) {
 	pass := getString(stored.Actions[0].Config, "smtp_pass")
 	if pass != "super-secret-old" {
 		t.Fatalf("smtp_pass = %q, want old value preserved", pass)
+	}
+}
+
+// testActionCall records a single /admin/config/test-action dispatch.
+// It's the canonical way to inspect what the executor would have been
+// handed without actually dialing SMTP or nostr relays.
+type testActionCall struct {
+	actionType string
+	config     map[string]any
+}
+
+// installTestActionRecorder swaps the fixture's executor for a recorder
+// that returns `err`. Returns a pointer the test can inspect after the
+// request completes.
+func installTestActionRecorder(fx *adminConfigFixture, err error) *testActionCall {
+	rec := &testActionCall{}
+	fx.d.execActionFn = func(ctx context.Context, t string, cfg map[string]any,
+		_ *HostConfig, _ *UserConfig, _, _ string) error {
+		rec.actionType = t
+		// copy so later mutations don't change the recorded snapshot.
+		rec.config = map[string]any{}
+		for k, v := range cfg {
+			rec.config[k] = v
+		}
+		return err
+	}
+	return rec
+}
+
+func TestTestActionExecutorFailurePropagates(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+	installTestActionRecorder(fx, fmt.Errorf("connection refused"))
+
+	payload := map[string]any{
+		"type":   "email",
+		"config": map[string]any{"smtp_host": "127.0.0.1", "smtp_port": 1},
+		"index":  -1,
+	}
+	raw, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config/test-action", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out testActionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ok {
+		t.Fatalf("ok = true, want false on executor error")
+	}
+	if !strings.Contains(out.Error, "connection refused") {
+		t.Fatalf("error = %q, want to include 'connection refused'", out.Error)
+	}
+}
+
+func TestTestActionReplacesMaskedSecret(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	uc := fx.watcher.Config()
+	uc.Actions = []Action{{Type: "email", Config: map[string]any{
+		"smtp_host": "smtp.example.com",
+		"smtp_port": 587,
+		"smtp_user": "bot@example.com",
+		"smtp_pass": "super-secret-old",
+		"to":        "you@example.com",
+		"subject":   "hi",
+		"body":      "b",
+	}}}
+	uc.UpdatedAt = time.Now()
+	fx.watcher.ReloadConfig(uc)
+
+	rec := installTestActionRecorder(fx, nil)
+
+	payload := map[string]any{
+		"type": "email",
+		"config": map[string]any{
+			"smtp_host": "smtp.example.com",
+			"smtp_port": 587,
+			"smtp_user": "bot@example.com",
+			"smtp_pass": maskedDisplay,
+			"to":        "you@example.com",
+			"subject":   "hi",
+			"body":      "b",
+		},
+		"index": 0,
+	}
+	raw, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config/test-action", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out testActionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Ok {
+		t.Fatalf("ok = false (%q), want true", out.Error)
+	}
+	if rec.actionType != "email" {
+		t.Fatalf("actionType = %q, want email", rec.actionType)
+	}
+	if got := rec.config["smtp_pass"]; got != "super-secret-old" {
+		t.Fatalf("smtp_pass = %v, want 'super-secret-old' (mask was not merged)", got)
+	}
+}
+
+func TestTestActionRequiresCSRF(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+	rec := installTestActionRecorder(fx, nil)
+
+	payload := map[string]any{"type": "email", "config": map[string]any{}, "index": -1}
+	raw, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config/test-action", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", "not-a-real-token")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if rec.actionType != "" {
+		t.Fatalf("executor was invoked despite CSRF failure: %+v", rec)
+	}
+}
+
+func TestTestActionUnknownType(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	payload := map[string]any{"type": "sms", "config": map[string]any{}, "index": -1}
+	raw, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config/test-action", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out testActionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ok {
+		t.Fatalf("ok = true, want false on unknown action type")
+	}
+	if !strings.Contains(out.Error, "unknown action type") {
+		t.Fatalf("error = %q, want to mention 'unknown action type'", out.Error)
 	}
 }
 

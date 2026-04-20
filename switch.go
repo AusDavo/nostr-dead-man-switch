@@ -19,7 +19,19 @@ type DeadManSwitch struct {
 	challenges *challengeStore // nil in federation mode
 	registry   *Registry       // nil in legacy mode
 	startedAt  time.Time
+
+	// testAction is the per-pubkey cooldown gate for /admin/config/test-action;
+	// prevents a stuck "test" button from nuking SMTP quotas.
+	testAction testActionGate
+
+	// execActionFn is the single-action dispatcher used by the test-action
+	// handler. Defaulted to the package-level executeAction; tests can swap
+	// it to capture the (type, config) pair without touching SMTP/nostr.
+	execActionFn testActionExecFn
 }
+
+type testActionExecFn func(ctx context.Context, actionType string, config map[string]any,
+	host *HostConfig, uc *UserConfig, watcherPrivHex, watcherPubHex string) error
 
 func NewDeadManSwitch(cfg *Config, state *State) *DeadManSwitch {
 	return &DeadManSwitch{

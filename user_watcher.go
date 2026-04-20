@@ -526,6 +526,14 @@ func (w *UserWatcher) effectiveRelaysFor(uc *UserConfig) []string {
 	return nil
 }
 
+// WatcherPrivHex returns the in-memory bot private key. Exposed so the
+// /admin/config/test-action handler can fire a nostr_note on the user's
+// behalf; never log this value.
+func (w *UserWatcher) WatcherPrivHex() string { return w.watcherPriv }
+
+// WatcherPubHex returns the bot public key (hex).
+func (w *UserWatcher) WatcherPubHex() string { return w.watcherPub }
+
 // Config returns a deep-copy snapshot of the current UserConfig. Callers
 // may mutate the returned value safely; it is not shared with the
 // watcher's internal state.

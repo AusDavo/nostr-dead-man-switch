@@ -48,6 +48,7 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
 	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
+	mux.HandleFunc("/admin/config/test-action", d.requireAuth(d.handleAdminConfigTestAction))
 
 	srv := &http.Server{Addr: d.cfg.ListenAddr, Handler: mux}
 

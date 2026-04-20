@@ -1,16 +1,42 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
 )
+
+// testActionCooldown rate-limits /admin/config/test-action per pubkey so
+// a wedged form can't hammer a user's SMTP provider into blocking them.
+const testActionCooldown = 2 * time.Second
+
+// testActionGate tracks the last test-action time per session pubkey. The
+// zero value is usable; Allow initialises the map lazily.
+type testActionGate struct {
+	mu      sync.Mutex
+	lastFor map[string]time.Time
+}
+
+func (g *testActionGate) Allow(pubkey string, now time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.lastFor == nil {
+		g.lastFor = make(map[string]time.Time)
+	}
+	if prev, ok := g.lastFor[pubkey]; ok && now.Sub(prev) < testActionCooldown {
+		return false
+	}
+	g.lastFor[pubkey] = now
+	return true
+}
 
 type watcherSetupData struct {
 	Npub         string
@@ -704,6 +730,92 @@ func (d *DeadManSwitch) handleAdminConfigGet(w http.ResponseWriter, r *http.Requ
 	adminConfigTemplate.Execute(w, data)
 }
 
+type testActionRequest struct {
+	Type   string         `json:"type"`
+	Config map[string]any `json:"config"`
+	Index  int            `json:"index"`
+}
+
+type testActionResponse struct {
+	Ok    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleAdminConfigTestAction fires a single action once and reports the
+// result inline. Federation-mode only, CSRF-required, per-pubkey cooldown.
+// On executor failure the response is HTTP 200 with {ok:false,error:...}
+// so the client can render the message inline; 4xx/5xx codes are reserved
+// for structural problems (bad JSON, missing session, etc).
+func (d *DeadManSwitch) handleAdminConfigTestAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !d.cfg.FederationV1 {
+		http.Error(w, "federation-only", http.StatusServiceUnavailable)
+		return
+	}
+	pubkey := d.sessions.pubkeyFromRequest(r)
+	if pubkey == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if token := r.Header.Get("X-CSRF-Token"); token == "" || !d.sessions.verifyCSRFToken(pubkey, token) {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return
+	}
+	if !d.testAction.Allow(pubkey, time.Now()) {
+		http.Error(w, "rate limited; wait a moment and try again", http.StatusTooManyRequests)
+		return
+	}
+	npub, err := formatNpub(pubkey)
+	if err != nil {
+		http.Error(w, "bad session pubkey", http.StatusInternalServerError)
+		return
+	}
+	if d.registry == nil {
+		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	watcher := d.registry.Get(npub)
+	if watcher == nil {
+		http.Error(w, "no watcher running for your npub", http.StatusNotFound)
+		return
+	}
+
+	var body testActionRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, adminConfigMaxBytes))
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Config == nil {
+		body.Config = map[string]any{}
+	}
+
+	stored := watcher.Config()
+	if stored != nil && body.Index >= 0 && body.Index < len(stored.Actions) {
+		mergeSecretMap(body.Config, stored.Actions[body.Index].Config)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	host := d.registry.Host()
+	exec := d.execActionFn
+	if exec == nil {
+		exec = executeAction
+	}
+	err = exec(ctx, body.Type, body.Config, host, stored,
+		watcher.WatcherPrivHex(), watcher.WatcherPubHex())
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := testActionResponse{Ok: err == nil}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
 // mergeSecretMasks walks new's actions and, wherever a known-secret field
 // holds the maskedDisplay placeholder, substitutes the corresponding value
 // from old. This lets the UI render secrets as bullets while still round-
@@ -896,8 +1008,10 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
           <option value="nostr_event">Nostr event</option>
         </select>
         <div class="spacer"></div>
+        <button type="button" class="secondary action-test">Test</button>
         <button type="button" class="danger action-remove">Remove</button>
       </div>
+      <div class="action-msg msg"></div>
       <div class="type-fields type-email">
         <div class="grid-2">
           <label><span class="k">SMTP host</span><input data-k="smtp_host" placeholder="smtp.fastmail.com"></label>
@@ -1043,6 +1157,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
       tpl.remove();
       renumber();
     });
+    tpl.querySelector('.action-test').addEventListener('click', () => testAction(tpl));
     // populate fields from a.config; empty cfg gets type-specific defaults
     let cfg = (a && a.config) || {};
     if (Object.keys(cfg).length === 0 && ACTION_DEFAULTS[type]) {
@@ -1080,6 +1195,20 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
     });
   }
 
+  function collectOne(node) {
+    const t = node.querySelector('.action-type').value;
+    const cfg = {};
+    node.querySelectorAll('.type-fields.type-' + t + ' [data-k]').forEach(el => {
+      const k = el.dataset.k;
+      const v = el.value;
+      if (v === '') return;
+      if (el.type === 'number' && !isNaN(Number(v))) cfg[k] = Number(v);
+      else if (k === 'relays') cfg[k] = v.split(',').map(s=>s.trim()).filter(Boolean);
+      else cfg[k] = v;
+    });
+    return { type: t, config: cfg };
+  }
+
   function collect() {
     const out = {
       subject_npub: subjectNpub,
@@ -1092,19 +1221,58 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
     };
     if (initial && initial.watcher_pubkey_hex) out.watcher_pubkey_hex = initial.watcher_pubkey_hex;
     document.querySelectorAll('#actions-list .action').forEach(n => {
-      const t = n.querySelector('.action-type').value;
-      const cfg = {};
-      n.querySelectorAll('.type-fields.type-' + t + ' [data-k]').forEach(el => {
-        const k = el.dataset.k;
-        const v = el.value;
-        if (v === '') return;
-        if (el.type === 'number' && !isNaN(Number(v))) cfg[k] = Number(v);
-        else if (k === 'relays') cfg[k] = v.split(',').map(s=>s.trim()).filter(Boolean);
-        else cfg[k] = v;
-      });
-      out.actions.push({type: t, config: cfg});
+      out.actions.push(collectOne(n));
     });
     return out;
+  }
+
+  async function testAction(node) {
+    const nodes = Array.from(document.querySelectorAll('#actions-list .action'));
+    const index = nodes.indexOf(node);
+    const msg = node.querySelector('.action-msg');
+    const btn = node.querySelector('.action-test');
+    const payload = collectOne(node);
+    msg.className = 'action-msg msg';
+    msg.textContent = '';
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Testing…';
+    try {
+      const r = await fetch('/admin/config/test-action', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
+        body: JSON.stringify({type: payload.type, config: payload.config, index: index}),
+      });
+      if (!r.ok) {
+        msg.className = 'action-msg msg err';
+        msg.textContent = (await r.text()) || ('HTTP ' + r.status);
+        return;
+      }
+      const data = await r.json();
+      if (data.ok) {
+        msg.className = 'action-msg msg ok';
+        msg.textContent = okMessageFor(payload.type);
+      } else {
+        msg.className = 'action-msg msg err';
+        msg.textContent = data.error || 'action failed';
+      }
+    } catch (e) {
+      msg.className = 'action-msg msg err';
+      msg.textContent = String(e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prev;
+    }
+  }
+
+  function okMessageFor(type) {
+    switch (type) {
+      case 'email': return 'Sent — check the inbox.';
+      case 'webhook': return 'Webhook responded OK.';
+      case 'nostr_note': return 'Published test note to configured relays.';
+      case 'nostr_event': return 'Published pre-signed event.';
+      default: return 'Action fired.';
+    }
   }
 
   hydrate(initial || {});
