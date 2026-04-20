@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nbd-wtf/go-nostr/nip19"
 )
@@ -189,6 +190,54 @@ func TestUserStoreSealedNsec(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("sealed nsec perms = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestUserStoreStateRoundTrip(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Missing state.json → fresh NewState(), no error.
+	got, err := u.LoadUserState(npub)
+	if err != nil {
+		t.Fatalf("LoadUserState (missing): %v", err)
+	}
+	if got == nil || !got.LastSeen.IsZero() || got.WarningSent != 0 {
+		t.Fatalf("missing state should be empty, got %+v", got)
+	}
+
+	s := NewState()
+	s.RecordEvent("abc123", time.Unix(1700000000, 0).UTC())
+	s.RecordWarning()
+	if err := u.SaveUserState(npub, s); err != nil {
+		t.Fatalf("SaveUserState: %v", err)
+	}
+
+	loaded, err := u.LoadUserState(npub)
+	if err != nil {
+		t.Fatalf("LoadUserState: %v", err)
+	}
+	if !loaded.LastSeen.Equal(s.LastSeen) {
+		t.Fatalf("LastSeen = %v, want %v", loaded.LastSeen, s.LastSeen)
+	}
+	if loaded.LastEventID != "abc123" {
+		t.Fatalf("LastEventID = %q", loaded.LastEventID)
+	}
+	// RecordWarning bumps WarningSent; RecordEvent resets it to 0, so
+	// issue order matters. In this test RecordEvent is called first.
+	if loaded.WarningSent != 1 {
+		t.Fatalf("WarningSent = %d, want 1", loaded.WarningSent)
+	}
+
+	info, err := os.Stat(filepath.Join(u.UserDir(npub), "state.json"))
+	if err != nil {
+		t.Fatalf("stat state.json: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("state.json perms = %o, want 0600", info.Mode().Perm())
 	}
 }
 

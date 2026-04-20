@@ -136,6 +136,41 @@ func (u *UserStore) SaveConfig(npub string, c *UserConfig) error {
 	return u.SaveConfigBytes(npub, data)
 }
 
+// LoadUserState reads state.json for the given npub. A missing file is
+// not an error: a fresh NewState() is returned so first-boot callers can
+// proceed without a special case.
+func (u *UserStore) LoadUserState(npub string) (*State, error) {
+	if err := validateNpub(npub); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(u.UserDir(npub), "state.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewState(), nil
+		}
+		return nil, fmt.Errorf("userstore: reading state.json: %w", err)
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("userstore: decoding state.json: %w", err)
+	}
+	return &s, nil
+}
+
+// SaveUserState atomically writes state.json with mode 0600.
+func (u *UserStore) SaveUserState(npub string, s *State) error {
+	if err := validateNpub(npub); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	data, err := json.MarshalIndent(s, "", "  ")
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("userstore: encoding state.json: %w", err)
+	}
+	return atomicWrite(filepath.Join(u.UserDir(npub), "state.json"), data, 0o600)
+}
+
 // HasSealedNsec reports whether watcher.nsec.enc exists for this user.
 func (u *UserStore) HasSealedNsec(npub string) bool {
 	_, err := os.Stat(filepath.Join(u.UserDir(npub), "watcher.nsec.enc"))
