@@ -725,6 +725,8 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   <div class="actions">
     <a class="btn" href="/admin">Go to admin</a>
     <a class="btn" href="/admin/config">Configuration</a>
+    <a class="btn" href="/">Status</a>
+    <form method="POST" action="/logout"><button type="submit" class="btn">Sign out</button></form>
   </div>
   {{else}}
   <p class="lead">
@@ -753,11 +755,11 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
       </div>
     </form>
   </div>
-  {{end}}
   <div class="actions">
     <a class="btn" href="/">Status</a>
     <form method="POST" action="/logout"><button type="submit" class="btn">Sign out</button></form>
   </div>
+  {{end}}
 </div>
 {{if .AlreadySetup}}
 <script>
