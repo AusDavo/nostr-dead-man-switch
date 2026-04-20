@@ -900,29 +900,37 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
       </div>
       <div class="type-fields type-email">
         <div class="grid-2">
-          <label><span class="k">SMTP host</span><input data-k="smtp_host"></label>
-          <label><span class="k">SMTP port</span><input data-k="smtp_port" type="number"></label>
-          <label><span class="k">SMTP user</span><input data-k="smtp_user"></label>
+          <label><span class="k">SMTP host</span><input data-k="smtp_host" placeholder="smtp.fastmail.com"></label>
+          <label><span class="k">SMTP port</span><input data-k="smtp_port" type="number" placeholder="587"></label>
+          <label><span class="k">SMTP user</span><input data-k="smtp_user" placeholder="you@example.com"></label>
           <label><span class="k">SMTP password</span><input data-k="smtp_pass" type="text" placeholder="••••••••"></label>
-          <label><span class="k">From</span><input data-k="from"></label>
-          <label><span class="k">To</span><input data-k="to"></label>
+          <label>
+            <span class="k">From</span>
+            <input data-k="from" placeholder="alerts@example.com">
+            <div class="muted" style="margin:0.2rem 0 0;font-size:0.7rem">Defaults to SMTP user if blank.</div>
+          </label>
+          <label><span class="k">To</span><input data-k="to" placeholder="recipient@example.com"></label>
         </div>
-        <label><span class="k">Subject</span><input data-k="subject"></label>
-        <label><span class="k">Body</span><textarea data-k="body"></textarea></label>
+        <label><span class="k">Subject</span><input data-k="subject" placeholder="Dead man's switch triggered"></label>
+        <label><span class="k">Body</span><textarea data-k="body" placeholder="If you got this, I haven't posted on nostr in a while."></textarea></label>
       </div>
       <div class="type-fields type-webhook">
-        <label><span class="k">URL</span><input data-k="url"></label>
+        <label><span class="k">URL</span><input data-k="url" placeholder="https://example.com/notify"></label>
         <label><span class="k">Method</span>
           <select data-k="method"><option value="POST">POST</option><option value="GET">GET</option></select>
         </label>
-        <label><span class="k">Body</span><textarea data-k="body"></textarea></label>
+        <label><span class="k">Body</span><textarea data-k="body" placeholder='{"event":"triggered"}'></textarea></label>
       </div>
       <div class="type-fields type-nostr_note">
-        <label><span class="k">Content</span><textarea data-k="content"></textarea></label>
+        <label><span class="k">Content</span><textarea data-k="content" placeholder="If you're reading this, I'm overdue. Here's what I wanted known…"></textarea></label>
       </div>
       <div class="type-fields type-nostr_event">
-        <label><span class="k">Signed event JSON</span><textarea data-k="event_json"></textarea></label>
-        <label><span class="k">Relays (comma-separated, optional)</span><input data-k="relays"></label>
+        <label>
+          <span class="k">Signed event JSON</span>
+          <textarea data-k="event_json" placeholder='{"id":"...","sig":"...","pubkey":"...","kind":1,"content":"...","tags":[],"created_at":0}'></textarea>
+          <div class="muted" style="margin:0.2rem 0 0;font-size:0.7rem">Pre-sign with <code>nak event --sec nsec1…</code> and paste the full JSON here.</div>
+        </label>
+        <label><span class="k">Relays (comma-separated, optional)</span><input data-k="relays" placeholder="wss://relay.damus.io, wss://nos.lol"></label>
       </div>
     </div>
   </template>
@@ -1014,18 +1022,32 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
     (uc.actions || []).forEach(a => addAction(a));
   }
 
+  // actionDefaults seeds a freshly-added action with non-blank sensibles.
+  // Only applied when the caller passes an empty config (i.e. the + Add
+  // action button); hydrated-from-server actions pass through untouched.
+  const ACTION_DEFAULTS = {
+    email: { smtp_port: 587 },
+    webhook: { method: 'POST' },
+    nostr_note: {},
+    nostr_event: {},
+  };
+
   function addAction(a) {
     const tpl = $('action-template').content.firstElementChild.cloneNode(true);
     const sel = tpl.querySelector('.action-type');
-    sel.value = a && a.type ? a.type : 'email';
+    const type = a && a.type ? a.type : 'email';
+    sel.value = type;
     updateTypeVisibility(tpl);
     sel.addEventListener('change', () => updateTypeVisibility(tpl));
     tpl.querySelector('.action-remove').addEventListener('click', () => {
       tpl.remove();
       renumber();
     });
-    // populate fields from a.config
-    const cfg = (a && a.config) || {};
+    // populate fields from a.config; empty cfg gets type-specific defaults
+    let cfg = (a && a.config) || {};
+    if (Object.keys(cfg).length === 0 && ACTION_DEFAULTS[type]) {
+      cfg = { ...ACTION_DEFAULTS[type] };
+    }
     tpl.querySelectorAll('[data-k]').forEach(el => {
       const k = el.dataset.k;
       if (k in cfg) {
