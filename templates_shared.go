@@ -167,8 +167,13 @@ textarea { font-family: var(--font-mono); resize: vertical; line-height: 1.4; }
 }
 .btn:hover, a.btn:hover, .actions form > button:hover { border-color: var(--accent); color: var(--accent); }
 
-.actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
-.actions > * { flex: 1; }
+.actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
 .actions form { margin: 0; }
 .actions form > button { width: 100%; }
 `
