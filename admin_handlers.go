@@ -656,6 +656,7 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
 
   <div class="actions">
     <a class="btn" href="/admin/config">Configuration</a>
+    <a class="btn" href="/admin/watcher">Watcher key</a>
     <a class="btn" href="/">Status</a>
     <form method="POST" action="/logout"><button type="submit">Sign out</button></form>
   </div>
