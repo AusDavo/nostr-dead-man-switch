@@ -171,6 +171,39 @@ func (u *UserStore) SaveUserState(npub string, s *State) error {
 	return atomicWrite(filepath.Join(u.UserDir(npub), "state.json"), data, 0o600)
 }
 
+// LoadDMCache reads config_dm_cache.json for the given npub. A missing
+// file is not an error: a fresh, zero-valued *ConfigDMCache is returned
+// so first-boot callers can proceed without a special case.
+func (u *UserStore) LoadDMCache(npub string) (*ConfigDMCache, error) {
+	if err := validateNpub(npub); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(u.UserDir(npub), "config_dm_cache.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ConfigDMCache{}, nil
+		}
+		return nil, fmt.Errorf("userstore: reading config_dm_cache.json: %w", err)
+	}
+	var c ConfigDMCache
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("userstore: decoding config_dm_cache.json: %w", err)
+	}
+	return &c, nil
+}
+
+// SaveDMCache atomically writes config_dm_cache.json with mode 0600.
+func (u *UserStore) SaveDMCache(npub string, c *ConfigDMCache) error {
+	if err := validateNpub(npub); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("userstore: encoding config_dm_cache.json: %w", err)
+	}
+	return atomicWrite(filepath.Join(u.UserDir(npub), "config_dm_cache.json"), data, 0o600)
+}
+
 // HasSealedNsec reports whether watcher.nsec.enc exists for this user.
 func (u *UserStore) HasSealedNsec(npub string) bool {
 	_, err := os.Stat(filepath.Join(u.UserDir(npub), "watcher.nsec.enc"))

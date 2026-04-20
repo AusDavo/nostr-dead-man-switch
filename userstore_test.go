@@ -241,6 +241,52 @@ func TestUserStoreStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUserStoreDMCacheRoundTrip(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	got, err := u.LoadDMCache(npub)
+	if err != nil {
+		t.Fatalf("LoadDMCache (missing): %v", err)
+	}
+	if got == nil || !got.LastAppliedCreatedAt.IsZero() || len(got.Seen) != 0 {
+		t.Fatalf("missing cache should be empty, got %+v", got)
+	}
+
+	c := &ConfigDMCache{}
+	now := time.Unix(1700000000, 0).UTC()
+	c.Record("ev1", now)
+	c.Promote("ev1", now)
+	if err := u.SaveDMCache(npub, c); err != nil {
+		t.Fatalf("SaveDMCache: %v", err)
+	}
+
+	loaded, err := u.LoadDMCache(npub)
+	if err != nil {
+		t.Fatalf("LoadDMCache: %v", err)
+	}
+	if loaded.LastAppliedEventID != "ev1" {
+		t.Fatalf("LastAppliedEventID = %q", loaded.LastAppliedEventID)
+	}
+	if !loaded.LastAppliedCreatedAt.Equal(now) {
+		t.Fatalf("LastAppliedCreatedAt = %v, want %v", loaded.LastAppliedCreatedAt, now)
+	}
+	if _, ok := loaded.Seen["ev1"]; !ok {
+		t.Fatalf("Seen missing ev1: %v", loaded.Seen)
+	}
+
+	info, err := os.Stat(filepath.Join(u.UserDir(npub), "config_dm_cache.json"))
+	if err != nil {
+		t.Fatalf("stat cache: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config_dm_cache.json perms = %o, want 0600", info.Mode().Perm())
+	}
+}
+
 func TestUserStoreDeleteUser(t *testing.T) {
 	u, _ := NewUserStore(t.TempDir())
 	npub := testNpub(t)
