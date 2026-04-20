@@ -18,6 +18,10 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	genKey := flag.Bool("generate-key", false, "generate a new bot keypair and exit")
 	resetSession := flag.Bool("reset-session", false, "rotate the dashboard session secret (invalidates all logins) and exit")
+	whitelistAdd := flag.String("whitelist-add", "", "add npub to whitelist and exit")
+	whitelistNote := flag.String("whitelist-note", "", "note to attach with --whitelist-add")
+	whitelistRemove := flag.String("whitelist-remove", "", "remove npub from whitelist and exit")
+	whitelistList := flag.Bool("whitelist-list", false, "list whitelist entries and exit")
 	flag.Parse()
 
 	if *genKey {
@@ -36,6 +40,12 @@ func main() {
 			log.Fatalf("Failed to rotate session secret: %v", err)
 		}
 		fmt.Printf("Session secret rotated. All existing dashboard sessions are invalidated.\nSecret file: %s\n", path)
+		return
+	}
+
+	if handled, err := handleWhitelistCLI(os.Stdout, cfg.WhitelistFile, *whitelistAdd, *whitelistNote, *whitelistRemove, *whitelistList); err != nil {
+		log.Fatalf("Whitelist: %v", err)
+	} else if handled {
 		return
 	}
 

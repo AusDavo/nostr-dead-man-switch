@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,6 +27,13 @@ type Config struct {
 	ListenAddr       string   `yaml:"listen_addr"`
 	Timezone         string   `yaml:"timezone"`
 	Actions          []Action `yaml:"actions"`
+
+	// Federation v1 fields. All unused until FederationV1 flips true;
+	// consumed by the per-user registry (#6) and migration (#5).
+	StateDir           string `yaml:"state_dir"`
+	WatcherStoreKeyEnv string `yaml:"watcher_store_key_env"`
+	WhitelistFile      string `yaml:"whitelist_file"`
+	FederationV1       bool   `yaml:"federation_v1"`
 
 	// Derived at load time
 	watchPubkeyHex string
@@ -163,6 +171,18 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.WarningInterval.Duration == 0 {
 		cfg.WarningInterval.Duration = 24 * time.Hour
+	}
+
+	// Federation v1 defaults. These are resolved even when federation_v1
+	// is false so CLI helpers (--whitelist-*) have a canonical path.
+	if cfg.StateDir == "" {
+		cfg.StateDir = filepath.Dir(cfg.StateFile)
+	}
+	if cfg.WatcherStoreKeyEnv == "" {
+		cfg.WatcherStoreKeyEnv = "DEADMAN_WATCHER_KEY"
+	}
+	if cfg.WhitelistFile == "" {
+		cfg.WhitelistFile = filepath.Join(cfg.StateDir, "whitelist.json")
 	}
 
 	if cfg.Timezone != "" {
