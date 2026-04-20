@@ -20,6 +20,15 @@ const loginVerifyMaxBytes = 16 * 1024
 
 var placeholderRe = regexp.MustCompile(`\[[^\]\n]+\]`)
 
+// displayAddr converts a listen_addr into something clickable in the log.
+// ":8080" → "localhost:8080"; "127.0.0.1:8080" → "127.0.0.1:8080".
+func displayAddr(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "localhost" + addr
+	}
+	return addr
+}
+
 func (d *DeadManSwitch) startServer(ctx context.Context) {
 	if d.cfg.ListenAddr == "" {
 		return
@@ -53,7 +62,7 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	srv := &http.Server{Addr: d.cfg.ListenAddr, Handler: mux}
 
 	go func() {
-		log.Printf("[server] status page at http://localhost%s", d.cfg.ListenAddr)
+		log.Printf("[server] status page at http://%s", displayAddr(d.cfg.ListenAddr))
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Printf("[server] error: %v", err)
 		}
@@ -906,7 +915,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <body>
 <div class="card">
   <h1>Sign in</h1>
-  <p class="subtitle">Use your Nostr browser extension to sign an authentication challenge. Only the pubkey set as <code>watch_pubkey</code> can sign in.</p>
+  <p class="subtitle">Use your Nostr browser extension to sign an authentication challenge. Only whitelisted npubs with an active watcher can sign in.</p>
   <button id="signin">Sign in with Nostr</button>
   <div id="err" class="error"></div>
   <p class="hint">Needs a NIP-07 extension such as <a href="https://getalby.com" target="_blank" rel="noopener">Alby</a>, <a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener">nos2x</a>, or nostr-keyx.</p>
