@@ -13,7 +13,7 @@ const maskedDisplay = "••••••••"
 
 var (
 	envRefRe    = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
-	secretKeyRe = regexp.MustCompile(`(?i)pass|passwd|password|token|secret|nsec|privkey|apikey|api_key`)
+	secretKeyRe = regexp.MustCompile(`(?i)pass|passwd|password|token|secret|nsec|privkey|apikey|api_key|watcher_key`)
 )
 
 type configField struct {
