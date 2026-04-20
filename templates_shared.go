@@ -150,7 +150,7 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 textarea { font-family: var(--font-mono); resize: vertical; line-height: 1.4; }
 
-.btn, a.btn {
+.btn, a.btn, .actions form > button {
   display: inline-block;
   padding: 0.6rem 0.75rem;
   border-radius: 0.4rem;
@@ -165,7 +165,7 @@ textarea { font-family: var(--font-mono); resize: vertical; line-height: 1.4; }
   font-family: inherit;
   transition: border-color 120ms ease-out, color 120ms ease-out;
 }
-.btn:hover, a.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:hover, a.btn:hover, .actions form > button:hover { border-color: var(--accent); color: var(--accent); }
 
 .actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
 .actions > * { flex: 1; }
