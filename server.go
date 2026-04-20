@@ -660,161 +660,22 @@ func formatNpub(hexPubkey string) (string, error) {
 var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Dead Man's Switch</title>
-<style>
-  :root {
-    --bg: #0f1117;
-    --card: #1a1d27;
-    --border: #2a2d3a;
-    --text: #e1e4ed;
-    --muted: #6b7194;
-    --green: #22c55e;
-    --yellow: #eab308;
-    --red: #ef4444;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    padding: 2rem 1rem;
-  }
-  .container { max-width: 480px; width: 100%; }
-  h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.8rem;
-    font-weight: 500;
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .status-healthy .status-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
-  .status-healthy { background: rgba(34,197,94,0.1); color: var(--green); }
-  .status-warning .status-dot { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
-  .status-warning { background: rgba(234,179,8,0.1); color: var(--yellow); }
-  .status-triggered .status-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
-  .status-triggered { background: rgba(239,68,68,0.1); color: var(--red); }
-
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 0.75rem;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-  .card-title {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    margin-bottom: 0.75rem;
-  }
-  .stat-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-  .stat-label {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-bottom: 0.125rem;
-  }
-  .stat-value {
-    font-size: 1.1rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  .stat-value.large {
-    font-size: 1.5rem;
-  }
-
-  .progress-track {
-    height: 6px;
-    background: var(--border);
-    border-radius: 3px;
-    margin-top: 0.75rem;
-    overflow: hidden;
-  }
-  .progress-bar {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 1s ease;
-  }
+<style>` + baseCSS + `
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .stat-label { font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.125rem; }
+  .stat-value { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-value.large { font-size: var(--text-2xl); letter-spacing: -0.01em; }
+  .progress-track { height: 6px; background: var(--border); border-radius: 3px; margin-top: 0.75rem; overflow: hidden; }
+  .progress-bar { height: 100%; border-radius: 3px; transition: width 1s ease-out; }
   .progress-healthy { background: var(--green); }
   .progress-warning { background: var(--yellow); }
   .progress-triggered { background: var(--red); }
-
-  .meta {
-    font-size: 0.75rem;
-    color: var(--muted);
-    display: flex;
-    justify-content: space-between;
-    margin-top: 0.5rem;
-  }
-  .footer {
-    text-align: center;
-    font-size: 0.7rem;
-    color: var(--muted);
-    margin-top: 1rem;
-  }
-  .footer a { color: var(--muted); }
-  .relay-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.375rem;
-  }
-  .warn-card {
-    background: rgba(234,179,8,0.08);
-    border-color: rgba(234,179,8,0.4);
-  }
-  .warn-card .card-title { color: var(--yellow); }
-  .warn-row {
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(234,179,8,0.15);
-  }
-  .warn-row:last-child { border-bottom: none; }
-  .warn-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--yellow);
-    margin-bottom: 0.2rem;
-  }
-  .warn-detail {
-    font-size: 0.75rem;
-    color: var(--muted);
-    line-height: 1.4;
-  }
-  .relay-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .relay-url {
-    font-size: 0.8rem;
-    color: var(--muted);
-    font-family: monospace;
-  }
+  .meta { font-size: var(--text-xs); color: var(--muted); display: flex; justify-content: space-between; margin-top: 0.5rem; }
+  .relay-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.375rem; }
+  .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .relay-url { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
 </style>
 </head>
 <body>
@@ -828,8 +689,8 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
   </h1>
 
   {{if .Warnings}}
-  <div class="card warn-card">
-    <div class="card-title">Configuration Issues ({{len .Warnings}})</div>
+  <div class="warn-banner">
+    <div class="warn-banner-header">Configuration Issues ({{len .Warnings}})</div>
     {{range .Warnings}}
     <div class="warn-row">
       <div class="warn-title">{{.Title}}</div>
@@ -894,31 +755,28 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Sign in · Dead Man's Switch</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; --red:#ef4444; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:2rem 1rem; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:2rem; max-width:420px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:0.5rem; }
-  .subtitle { color:var(--muted); font-size:0.9rem; margin-bottom:1.5rem; line-height:1.5; }
-  button { width:100%; padding:0.75rem 1rem; background:var(--accent); color:#0f1117; border:none; border-radius:0.5rem; font-size:0.95rem; font-weight:600; cursor:pointer; }
-  button:hover { filter:brightness(1.1); }
-  button:disabled { opacity:0.5; cursor:not-allowed; }
-  .hint { color:var(--muted); font-size:0.8rem; margin-top:1rem; text-align:center; line-height:1.5; }
-  .hint a { color:var(--accent); }
-  .error { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.4); color:var(--red); padding:0.75rem; border-radius:0.5rem; font-size:0.85rem; margin-top:1rem; display:none; }
-  .error.show { display:block; }
-  .back { display:block; text-align:center; color:var(--muted); font-size:0.8rem; margin-top:1rem; text-decoration:none; }
+<style>` + baseCSS + `
+  body { align-items: center; }
+  .card { padding: 2rem; max-width: 420px; }
+  h1 { margin-bottom: 0.5rem; }
+  .subtitle { color: var(--muted); font-size: var(--text-sm); margin-bottom: 1.5rem; line-height: 1.5; }
+  button.primary { width: 100%; padding: 0.75rem 1rem; background: var(--accent); color: var(--accent-ink); border: none; border-radius: 0.4rem; font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: var(--text-xs); margin-top: 1rem; text-align: center; line-height: 1.5; }
+  .hint a { color: var(--accent); }
+  .error { background: rgba(210,104,94,0.08); border: 1px solid rgba(210,104,94,0.4); color: var(--red); padding: 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-top: 1rem; display: none; }
+  .error.show { display: block; }
+  .back { display: block; text-align: center; color: var(--muted); font-size: var(--text-xs); margin-top: 1rem; text-decoration: none; }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>Sign in</h1>
   <p class="subtitle">Use your Nostr browser extension to sign an authentication challenge. Only whitelisted npubs with an active watcher can sign in.</p>
-  <button id="signin">Sign in with Nostr</button>
+  <button id="signin" class="primary">Sign in with Nostr</button>
   <div id="err" class="error"></div>
   <p class="hint">Needs a NIP-07 extension such as <a href="https://getalby.com" target="_blank" rel="noopener">Alby</a>, <a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener">nos2x</a>, or nostr-keyx.</p>
   <a href="/" class="back">← back to status</a>
@@ -960,22 +818,12 @@ btn.addEventListener('click', async () => {
 var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Admin · Dead Man's Switch</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:480px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.5rem; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .label { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.5rem; }
-  .value { font-family:monospace; font-size:0.9rem; word-break:break-all; }
-  .muted { color:var(--muted); font-size:0.85rem; line-height:1.5; }
-  .actions { display:flex; gap:0.5rem; margin-top:1rem; }
-  a.btn, button.btn { flex:1; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; cursor:pointer; font-family:inherit; }
-  a.btn:hover, button.btn:hover { border-color:var(--accent); color:var(--accent); }
+<style>` + baseCSS + `
+  .label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+  .value { font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; }
+  .muted { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -990,7 +838,7 @@ var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOC
   </div>
   <div class="actions">
     <a class="btn" href="/">Status</a>
-    <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%">Sign out</button></form>
+    <form method="POST" action="/logout"><button type="submit" class="btn">Sign out</button></form>
   </div>
 </div>
 </body>
@@ -999,27 +847,17 @@ var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOC
 var federationStatusTemplate = template.Must(template.New("federationStatus").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Dead Man's Switch · federation</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --green:#22c55e; --yellow:#eab308; --red:#ef4444; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:480px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.5rem; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem; }
-  .stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; }
-  .stat { text-align:center; }
-  .stat-label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.35rem; }
-  .stat-value { font-size:1.5rem; font-weight:600; font-variant-numeric:tabular-nums; }
-  .stat.armed .stat-value { color:var(--green); }
-  .stat.warning .stat-value { color:var(--yellow); }
-  .stat.triggered .stat-value { color:var(--red); }
-  .empty { color:var(--muted); font-style:italic; text-align:center; padding:0.5rem 0; }
-  .footer { text-align:center; font-size:0.7rem; color:var(--muted); margin-top:1rem; }
-  .footer a { color:var(--muted); }
+<style>` + baseCSS + `
+  .stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 0.75rem; }
+  .stat { text-align: center; }
+  .stat-label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.35rem; }
+  .stat-value { font-size: var(--text-2xl); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat.armed .stat-value { color: var(--green); }
+  .stat.warning .stat-value { color: var(--yellow); }
+  .stat.triggered .stat-value { color: var(--red); }
+  .empty { color: var(--muted); font-style: italic; text-align: center; padding: 0.5rem 0; }
 </style>
 </head>
 <body>

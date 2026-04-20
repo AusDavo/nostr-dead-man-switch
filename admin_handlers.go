@@ -410,6 +410,8 @@ type adminHubData struct {
 	TriggeredAt   string
 	Warnings      []configWarning
 	StartedAt     string
+	WatcherNpub   string
+	HasNostrDM    bool
 }
 
 // handleAdminFederation renders the per-user admin hub. If the user has
@@ -500,6 +502,18 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 
 	data.Warnings = userConfigWarnings(uc)
 
+	for _, a := range uc.Actions {
+		if a.Type == "nostr_dm" {
+			data.HasNostrDM = true
+			break
+		}
+	}
+	if data.HasNostrDM {
+		if wn, err := nip19.EncodePublicKey(uc.WatcherPubkeyHex); err == nil {
+			data.WatcherNpub = wn
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	adminHubTemplate.Execute(w, data)
 }
@@ -542,55 +556,25 @@ func userConfigWarnings(uc *UserConfig) []configWarning {
 var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Admin · Dead Man's Switch</title>
-<style>
-  :root {
-    --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194;
-    --green:#22c55e; --yellow:#eab308; --red:#ef4444; --accent:#a78bfa;
-  }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:480px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.25rem; display:flex; align-items:center; gap:0.5rem; }
-  .status-badge { display:inline-flex; align-items:center; gap:0.375rem; padding:0.25rem 0.75rem; border-radius:9999px; font-size:0.8rem; font-weight:500; }
-  .status-dot { width:8px; height:8px; border-radius:50%; }
-  .status-healthy .status-dot { background:var(--green); box-shadow:0 0 8px var(--green); }
-  .status-healthy { background:rgba(34,197,94,0.1); color:var(--green); }
-  .status-warning .status-dot { background:var(--yellow); box-shadow:0 0 8px var(--yellow); }
-  .status-warning { background:rgba(234,179,8,0.1); color:var(--yellow); }
-  .status-triggered .status-dot { background:var(--red); box-shadow:0 0 8px var(--red); }
-  .status-triggered { background:rgba(239,68,68,0.1); color:var(--red); }
-  .npub { margin-left:auto; font-family:monospace; font-size:0.75rem; color:var(--muted); font-weight:400; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem; }
-  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
-  .stat-label { font-size:0.75rem; color:var(--muted); margin-bottom:0.125rem; }
-  .stat-value { font-size:1.1rem; font-weight:600; font-variant-numeric:tabular-nums; }
-  .stat-value.large { font-size:1.5rem; }
-  .progress-track { height:6px; background:var(--border); border-radius:3px; margin-top:0.75rem; overflow:hidden; }
-  .progress-bar { height:100%; border-radius:3px; transition:width 1s ease; }
-  .progress-healthy { background:var(--green); }
-  .progress-warning { background:var(--yellow); }
-  .progress-triggered { background:var(--red); }
-  .meta { font-size:0.75rem; color:var(--muted); display:flex; justify-content:space-between; margin-top:0.5rem; }
-  .relay-row { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.375rem; }
-  .relay-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-  .relay-url { font-size:0.8rem; color:var(--muted); font-family:monospace; }
-  .warn-card { background:rgba(234,179,8,0.08); border-color:rgba(234,179,8,0.4); }
-  .warn-card .card-title { color:var(--yellow); }
-  .warn-row { padding:0.5rem 0; border-bottom:1px solid rgba(234,179,8,0.15); }
-  .warn-row:last-child { border-bottom:none; }
-  .warn-title { font-size:0.85rem; font-weight:600; color:var(--yellow); margin-bottom:0.2rem; }
-  .warn-detail { font-size:0.75rem; color:var(--muted); line-height:1.4; }
-  .actions { display:flex; gap:0.5rem; margin-top:1rem; }
-  a.btn, .actions form button { flex:1; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; cursor:pointer; font-family:inherit; font-weight:400; }
-  a.btn:hover, .actions form button:hover { border-color:var(--accent); color:var(--accent); }
-  .actions form { flex:1; margin:0; }
-  .actions form button { width:100%; }
-  .footer { text-align:center; font-size:0.7rem; color:var(--muted); margin-top:1rem; }
-  .footer a { color:var(--muted); }
+<style>` + baseCSS + `
+  h1 .npub { margin-left: auto; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .stat-label { font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.125rem; }
+  .stat-value { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-value.large { font-size: var(--text-2xl); letter-spacing: -0.01em; }
+  .progress-track { height: 6px; background: var(--border); border-radius: 3px; margin-top: 0.75rem; overflow: hidden; }
+  .progress-bar { height: 100%; border-radius: 3px; transition: width 1s ease-out; }
+  .progress-healthy { background: var(--green); }
+  .progress-warning { background: var(--yellow); }
+  .progress-triggered { background: var(--red); }
+  .meta { font-size: var(--text-xs); color: var(--muted); display: flex; justify-content: space-between; margin-top: 0.5rem; }
+  .relay-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.375rem; }
+  .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .relay-url { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
+  .note-detail { font-size: var(--text-sm); color: var(--muted); line-height: 1.5; }
+  .note-detail code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; }
 </style>
 </head>
 <body>
@@ -602,8 +586,8 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
   </h1>
 
   {{if .Warnings}}
-  <div class="card warn-card">
-    <div class="card-title">Configuration Issues ({{len .Warnings}})</div>
+  <div class="warn-banner">
+    <div class="warn-banner-header">Configuration Issues ({{len .Warnings}})</div>
     {{range .Warnings}}
     <div class="warn-row">
       <div class="warn-title">{{.Title}}</div>
@@ -654,6 +638,16 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
   </div>
   {{end}}
 
+  {{if .HasNostrDM}}
+  <div class="card">
+    <div class="card-title">Nostr DM recipients</div>
+    <div class="note-detail">
+      Ask each intended recipient to follow or whitelist the watcher npub — many Nostr clients silently filter kind-4 DMs from unknown senders, so a recipient who hasn't whitelisted will likely never see the fire-time message.
+      <div style="margin-top:0.6rem;"><code>{{.WatcherNpub}}</code></div>
+    </div>
+  </div>
+  {{end}}
+
   <div class="actions">
     <a class="btn" href="/admin/config">Configuration</a>
     <a class="btn" href="/admin/watcher">Watcher key</a>
@@ -670,39 +664,29 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
 var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Set up watcher · Dead Man's Switch</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; --red:#ef4444; --green:#22c55e; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:640px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:0.35rem; display:flex; justify-content:space-between; align-items:center; gap:0.75rem; }
-  .npub { font-family:monospace; font-size:0.8rem; color:var(--muted); font-weight:400; }
-  .lead { color:var(--muted); font-size:0.9rem; line-height:1.5; margin-bottom:1.5rem; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .card-title { font-size:0.85rem; font-weight:600; margin-bottom:0.5rem; color:var(--text); }
-  .muted { color:var(--muted); font-size:0.85rem; line-height:1.5; margin-bottom:0.75rem; }
-  label.consent { display:flex; gap:0.5rem; align-items:flex-start; font-size:0.8rem; color:var(--muted); margin:0.75rem 0; line-height:1.4; }
-  label.consent input { margin-top:0.2rem; }
-  textarea { width:100%; min-height:96px; padding:0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:0.5rem; color:var(--text); font-family:monospace; font-size:0.8rem; line-height:1.4; resize:vertical; }
-  textarea:focus { outline:none; border-color:var(--accent); }
-  button.primary { padding:0.6rem 1rem; border-radius:0.5rem; border:1px solid var(--accent); background:var(--accent); color:#0f1117; font-size:0.9rem; font-weight:600; cursor:pointer; font-family:inherit; width:100%; }
-  button.primary:hover { filter:brightness(1.1); }
-  button.ghost { padding:0.55rem 0.9rem; border-radius:0.5rem; border:1px solid var(--accent); background:transparent; color:var(--accent); font-size:0.85rem; cursor:pointer; font-family:inherit; }
-  button.ghost:hover { background:var(--accent); color:#0f1117; }
-  button.ghost:disabled { opacity:0.55; cursor:progress; }
-  .warn-banner { background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.35); color:var(--red); padding:0.75rem 1rem; border-radius:0.5rem; font-size:0.85rem; margin-bottom:1.25rem; line-height:1.5; }
-  .actions { display:flex; gap:0.5rem; margin-top:1rem; }
-  a.btn { flex:1; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; }
-  a.btn:hover { border-color:var(--accent); color:var(--accent); }
-  .pub { font-family:monospace; font-size:0.8rem; color:var(--text); word-break:break-all; background:var(--bg); border:1px solid var(--border); border-radius:0.5rem; padding:0.6rem; user-select:all; }
-  .reveal-row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem; }
-  pre.secret { background:var(--bg); border:1px solid var(--red); border-radius:0.5rem; padding:0.75rem; margin-top:0.75rem; font-family:monospace; font-size:0.8rem; word-break:break-all; white-space:pre-wrap; user-select:all; color:var(--text); display:none; }
-  pre.secret.shown { display:block; }
-  .reveal-err { color:var(--red); font-size:0.8rem; margin-top:0.5rem; display:none; }
-  .reveal-err.shown { display:block; }
+<style>` + baseCSS + `
+  .container { max-width: 640px; }
+  h1 { justify-content: space-between; margin-bottom: 0.35rem; }
+  .lead { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 1.5rem; }
+  .card-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); text-transform: none; letter-spacing: normal; margin-bottom: 0.5rem; }
+  .muted { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 0.75rem; }
+  label.consent { display: flex; gap: 0.5rem; align-items: flex-start; font-size: var(--text-xs); color: var(--muted); margin: 0.75rem 0; line-height: 1.4; }
+  label.consent input { margin-top: 0.2rem; }
+  textarea { width: 100%; min-height: 96px; }
+  button.primary { padding: 0.6rem 1rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; width: 100%; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.ghost { padding: 0.55rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
+  button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
+  button.ghost:disabled { opacity: 0.55; cursor: progress; }
+  .alert-danger { background: rgba(210,104,94,0.08); border-left: 3px solid var(--red); color: var(--red); padding: 0.75rem 1rem; border-radius: 0 0.25rem 0.25rem 0; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.5; }
+  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.6rem; user-select: all; }
+  .reveal-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  pre.secret { background: var(--bg); border: 1px solid var(--red); border-radius: 0.4rem; padding: 0.75rem; margin-top: 0.75rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; white-space: pre-wrap; user-select: all; color: var(--text); display: none; }
+  pre.secret.shown { display: block; }
+  .reveal-err { color: var(--red); font-size: var(--text-xs); margin-top: 0.5rem; display: none; }
+  .reveal-err.shown { display: block; }
 </style>
 </head>
 <body>
@@ -746,7 +730,7 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   <p class="lead">
     Before your switch can monitor you, it needs a bot key that will sign warning DMs and the final triggered event. Generate a new one in-browser or paste an existing nsec.
   </p>
-  <div class="warn-banner">
+  <div class="alert-danger">
     <strong>Heads up.</strong> A generated nsec is displayed exactly once. Copy it into a password manager before leaving the next screen — we cannot recover it.
   </div>
   <div class="card">
@@ -772,7 +756,7 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   {{end}}
   <div class="actions">
     <a class="btn" href="/">Status</a>
-    <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%;cursor:pointer;font-family:inherit">Sign out</button></form>
+    <form method="POST" action="/logout"><button type="submit" class="btn">Sign out</button></form>
   </div>
 </div>
 {{if .AlreadySetup}}
@@ -839,31 +823,24 @@ function copyRevealed(){
 var watcherGeneratedTemplate = template.Must(template.New("watcherGenerated").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Save your nsec · Dead Man's Switch</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; --red:#ef4444; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:640px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:0.35rem; }
-  .warn-banner { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.45); color:var(--red); padding:0.9rem 1rem; border-radius:0.5rem; font-size:0.9rem; margin-bottom:1.25rem; line-height:1.55; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.5rem; }
-  pre.secret { background:var(--bg); border:1px solid var(--border); border-radius:0.5rem; padding:0.9rem; font-family:monospace; font-size:0.85rem; word-break:break-all; white-space:pre-wrap; user-select:all; }
-  .pub { font-family:monospace; font-size:0.8rem; color:var(--muted); word-break:break-all; }
-  button.copy { margin-top:0.75rem; padding:0.5rem 0.9rem; border-radius:0.5rem; border:1px solid var(--accent); background:transparent; color:var(--accent); font-size:0.85rem; cursor:pointer; font-family:inherit; }
-  button.copy:hover { background:var(--accent); color:#0f1117; }
-  .actions { display:flex; gap:0.5rem; margin-top:1rem; }
-  a.primary { flex:1; padding:0.7rem 1rem; border-radius:0.5rem; border:1px solid var(--accent); background:var(--accent); color:#0f1117; text-decoration:none; text-align:center; font-size:0.9rem; font-weight:600; }
-  a.primary:hover { filter:brightness(1.1); }
+<style>` + baseCSS + `
+  .container { max-width: 640px; }
+  h1 { margin-bottom: 0.35rem; }
+  .alert-danger { background: rgba(210,104,94,0.08); border-left: 3px solid var(--red); color: var(--red); padding: 0.9rem 1rem; border-radius: 0 0.25rem 0.25rem 0; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.55; }
+  pre.secret { background: var(--bg); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; white-space: pre-wrap; user-select: all; }
+  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); word-break: break-all; }
+  button.copy { margin-top: 0.75rem; padding: 0.5rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
+  button.copy:hover { background: var(--accent); color: var(--accent-ink); }
+  a.primary { padding: 0.7rem 1rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 600; display: block; }
+  a.primary:hover { filter: brightness(1.05); }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Your new bot nsec</h1>
-  <div class="warn-banner">
+  <div class="alert-danger">
     <strong>Copy this now.</strong> This is the only time we will show your nsec. Paste it into a password manager before clicking continue. If you lose it you'll need to rotate the watcher key.
   </div>
   <div class="card">
@@ -1078,58 +1055,47 @@ func mergeSecretMap(dst, src map[string]any) {
 var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+` + sharedHead + `
 <title>Configuration · Dead Man's Switch</title>
-<style>
-  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --accent:#a78bfa; --red:#ef4444; --green:#22c55e; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:720px; width:100%; }
-  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.25rem; display:flex; justify-content:space-between; align-items:center; gap:0.75rem; }
-  h2 { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem; font-weight:500; }
-  .npub { font-family:monospace; font-size:0.8rem; color:var(--muted); font-weight:400; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
-  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }
-  label { display:block; font-size:0.75rem; color:var(--muted); margin-bottom:0.75rem; }
-  label span.k { display:block; margin-bottom:0.25rem; }
-  input[type="text"], input[type="number"], input[type="password"], input:not([type]), textarea, select {
-    width:100%; padding:0.55rem 0.65rem; background:var(--bg); border:1px solid var(--border);
-    border-radius:0.4rem; color:var(--text); font-family:inherit; font-size:0.85rem;
-  }
-  textarea { font-family:monospace; font-size:0.8rem; min-height:80px; resize:vertical; line-height:1.4; }
-  input:focus, textarea:focus, select:focus { outline:none; border-color:var(--accent); }
-  .muted { color:var(--muted); font-size:0.8rem; line-height:1.5; margin-bottom:0.75rem; }
-  button { padding:0.55rem 0.9rem; border-radius:0.4rem; border:1px solid var(--accent); background:var(--accent); color:#0f1117; font-size:0.85rem; font-weight:600; cursor:pointer; font-family:inherit; }
-  button:hover { filter:brightness(1.1); }
-  button.secondary { background:transparent; color:var(--text); border:1px solid var(--border); font-weight:400; }
-  button.secondary:hover { border-color:var(--accent); color:var(--accent); }
-  button.danger { background:transparent; color:var(--red); border:1px solid rgba(239,68,68,0.4); font-weight:400; }
-  button.danger:hover { background:rgba(239,68,68,0.1); }
-  .action { border:1px solid var(--border); border-radius:0.5rem; padding:0.9rem; margin-bottom:0.75rem; background:rgba(15,17,23,0.35); }
-  .action-head { display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem; }
-  .action-head .action-index { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
-  .action-head .spacer { flex:1; }
-  .type-fields { display:none; }
-  .msg { font-size:0.85rem; padding:0.6rem 0.75rem; border-radius:0.4rem; margin-bottom:1rem; display:none; white-space:pre-wrap; }
-  .msg.err { display:block; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.4); color:var(--red); }
-  .msg.ok { display:block; background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.4); color:var(--green); }
-  .card-actions { display:flex; gap:0.5rem; align-items:center; }
-  .dur { display:flex; gap:0.4rem; align-items:stretch; }
-  .dur .dur-n { flex:1; min-width:0; }
-  .dur .dur-u { flex:0 0 auto; width:auto; }
-  .dur .dur-raw { flex:1; }
-  .dur-toggle { background:none; border:none; color:var(--muted); font-size:0.7rem; cursor:pointer; padding:0.2rem 0; margin-top:0.15rem; font-family:inherit; }
-  .dur-toggle:hover { color:var(--accent); }
-  details { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; margin-bottom:1rem; }
-  details > summary { cursor:pointer; font-size:0.85rem; color:var(--muted); }
-  details[open] > summary { margin-bottom:0.75rem; color:var(--text); }
-  #raw-json { min-height:280px; font-size:0.8rem; }
-  .footer-actions { display:flex; gap:0.5rem; margin-top:1rem; }
-  .footer-actions a, .footer-actions form { flex:1; }
-  .footer-actions a, .footer-actions form button { width:100%; padding:0.6rem 0.75rem; border-radius:0.5rem; border:1px solid var(--border); background:transparent; color:var(--text); text-decoration:none; text-align:center; font-size:0.85rem; cursor:pointer; font-family:inherit; font-weight:400; display:block; }
-  .footer-actions a:hover, .footer-actions form button:hover { border-color:var(--accent); color:var(--accent); }
-  .footer-actions form { margin:0; }
+<style>` + baseCSS + `
+  .container { max-width: 720px; }
+  h1 { justify-content: space-between; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  label { display: block; font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.75rem; }
+  label span.k { display: block; margin-bottom: 0.25rem; }
+  input, textarea, select { width: 100%; }
+  textarea { min-height: 80px; }
+  .muted { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
+  button.primary { padding: 0.55rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.secondary { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--text); border: 1px solid var(--border); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; transition: border-color 120ms ease-out, color 120ms ease-out; }
+  button.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  button.danger { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(210,104,94,0.4); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; }
+  button.danger:hover { background: rgba(210,104,94,0.08); }
+  .action { border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; margin-bottom: 0.75rem; }
+  .action-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .action-head .action-index { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .action-head .spacer { flex: 1; }
+  .type-fields { display: none; }
+  .msg { font-size: var(--text-sm); padding: 0.6rem 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; display: none; white-space: pre-wrap; }
+  .msg.err { display: block; background: rgba(210,104,94,0.08); border: 1px solid rgba(210,104,94,0.4); color: var(--red); }
+  .msg.ok { display: block; background: rgba(111,168,106,0.08); border: 1px solid rgba(111,168,106,0.4); color: var(--green); }
+  .card-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .dur { display: flex; gap: 0.4rem; align-items: stretch; }
+  .dur .dur-n { flex: 1; min-width: 0; }
+  .dur .dur-u { flex: 0 0 auto; width: auto; }
+  .dur .dur-raw { flex: 1; }
+  .dur-toggle { background: none; border: none; color: var(--muted); font-size: var(--text-xs); cursor: pointer; padding: 0.2rem 0; margin-top: 0.15rem; font-family: inherit; }
+  .dur-toggle:hover { color: var(--accent); }
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  details > summary { cursor: pointer; font-size: var(--text-sm); color: var(--muted); }
+  details[open] > summary { margin-bottom: 0.75rem; color: var(--text); }
+  #raw-json { min-height: 280px; font-size: var(--text-xs); }
+  .footer-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+  .footer-actions > * { flex: 1; }
+  .footer-actions form { margin: 0; }
+  .footer-actions a, .footer-actions form button { width: 100%; padding: 0.6rem 0.75rem; border-radius: 0.4rem; border: 1px solid var(--border); background: transparent; color: var(--text); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; display: block; transition: border-color 120ms ease-out, color 120ms ease-out; }
+  .footer-actions a:hover, .footer-actions form button:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1209,7 +1175,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   </details>
 
   <div class="card card-actions">
-    <button type="button" id="save">Save</button>
+    <button type="button" class="primary" id="save">Save configuration</button>
     <span class="muted" style="margin:0">Signs as a self-DM and propagates to peer instances.</span>
   </div>
 
