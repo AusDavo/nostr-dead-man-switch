@@ -257,6 +257,46 @@ Use a dedicated keypair for the bot. Do **not** use your main nsec.
 - [Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1) — edit `config.yaml` and actions through the existing status page instead of shell + YAML, so non-technical users can maintain their own switch.
 - [Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2) — one deployment serves multiple users, each with their own pubkey, bot key, and actions. Lets a trusted operator offer a dead-man switch to friends and family who can't self-host. Depends on the dashboard landing first.
 
+## Federation v1: config propagation
+
+In multi-tenant (federation) mode, peer watchers share the subject's
+watcher nsec so any active peer can evaluate the switch. To keep the
+effective `UserConfig` consistent across peers without an out-of-band
+sync channel, v1 uses **self-DMs as the propagation fabric**:
+
+- Every peer publishes its desired config as a kind-4 event authored by
+  the watcher pubkey, `p`-tagged to itself, with `content` set to a
+  NIP-44 ciphertext of the JSON-encoded `UserConfig` (the conversation
+  key is derived from `watcherPub` to `watcherPub`).
+- Every peer subscribes to the same filter (kind-4, `authors` and `#p`
+  both equal to the watcher pubkey) and applies incoming payloads with
+  **newest-`created_at`-wins** semantics.
+- Local persistence is best-effort-idempotent: each applied event id is
+  recorded in `config_dm_cache.json` so a peer ignores its own writes
+  on the return trip and drops duplicates from multiple relays.
+
+Kind-4 + NIP-44 inside the legacy DM envelope is a deliberate v1 choice
+— many hosted relays still drop unknown kinds, so gift-wrapped kind-14
+would break propagation on real deployments. Revisit in v2 once NIPs
+17/44/59 have broader relay support.
+
+### Limitations
+
+- **Duplicate firing.** If multiple peers are active when a subject's
+  silence threshold elapses, every active peer fires its configured
+  actions independently. v1 has no cross-peer fire coordination —
+  stagger deployments, or keep only one peer in the warning window to
+  avoid double-sends. v2 will add fire-receipts + staggered slots.
+- **No nsec rotation flow.** Rotating the watcher nsec requires
+  coordinated redeploy across peers; automated rotation ships later.
+- **Relay-partition tolerance.** A peer that can't see the subject on
+  any reachable relay but can receive self-DMs from another peer still
+  evaluates silence against its own view. Cross-peer PoL attestation is
+  a v2 item.
+
+`federation_v1` stays `false` by default in this release; the
+federated evaluate path is inert on legacy single-switch deployments.
+
 ## License
 
 MIT
