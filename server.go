@@ -21,11 +21,15 @@ const loginVerifyMaxBytes = 16 * 1024
 var placeholderRe = regexp.MustCompile(`\[[^\]\n]+\]`)
 
 func (d *DeadManSwitch) startServer(ctx context.Context) {
+	if d.cfg.FederationV1 {
+		log.Println("[server] federation mode: HTTP dashboard not yet wired (see #8)")
+		return
+	}
 	if d.cfg.ListenAddr == "" {
 		return
 	}
 
-	secretPath := filepath.Join(filepath.Dir(d.cfg.StateFile), "session_secret")
+	secretPath := filepath.Join(d.cfg.StateDir, "session_secret")
 	sm, err := newSessionManager(secretPath)
 	if err != nil {
 		log.Printf("[server] session init failed: %v", err)

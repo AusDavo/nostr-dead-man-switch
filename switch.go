@@ -2,16 +2,22 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 	"time"
 )
 
 type DeadManSwitch struct {
 	cfg        *Config
-	state      *State
-	monitor    *Monitor
-	sessions   *sessionManager
-	challenges *challengeStore
+	state      *State          // nil in federation mode
+	monitor    *Monitor        // nil in federation mode
+	sessions   *sessionManager // nil in federation mode
+	challenges *challengeStore // nil in federation mode
+	registry   *Registry       // nil in legacy mode
 	startedAt  time.Time
 }
 
@@ -40,7 +46,17 @@ func (d *DeadManSwitch) legacyUserConfig() *UserConfig {
 	}
 }
 
+// Run dispatches to the federation or legacy supervisor based on
+// cfg.FederationV1. The default is false; legacy callers see no
+// behaviour change until #8 flips the default.
 func (d *DeadManSwitch) Run(ctx context.Context) error {
+	if d.cfg.FederationV1 {
+		return d.runFederation(ctx)
+	}
+	return d.runLegacy(ctx)
+}
+
+func (d *DeadManSwitch) runLegacy(ctx context.Context) error {
 	if d.state.Triggered {
 		log.Printf("Switch already triggered at %s. Delete state file to re-arm.", d.state.TriggeredAt)
 		return nil
@@ -138,5 +154,66 @@ func (d *DeadManSwitch) evaluate(ctx context.Context) {
 		}
 		d.state.RecordWarning()
 		d.state.Save(d.cfg.StateFile)
+	}
+}
+
+// runFederation wires the federated supervisor: Sealer → UserStore →
+// Whitelist → Migrate → Registry → SIGHUP watcher. The HTTP dashboard
+// is intentionally not started here — it's rewired by #8.
+func (d *DeadManSwitch) runFederation(ctx context.Context) error {
+	host := d.cfg.Host()
+
+	sealer, err := NewSealerFromEnv(host.WatcherStoreKeyEnv)
+	if err != nil {
+		return fmt.Errorf("federation: sealer: %w", err)
+	}
+
+	store, err := NewUserStore(filepath.Join(host.StateDir, "users"))
+	if err != nil {
+		return fmt.Errorf("federation: store: %w", err)
+	}
+
+	wl, err := LoadWhitelist(host.WhitelistFile)
+	if err != nil {
+		return fmt.Errorf("federation: whitelist: %w", err)
+	}
+
+	if err := Migrate(d.cfg, store, wl, sealer); err != nil {
+		return fmt.Errorf("federation: migrate: %w", err)
+	}
+
+	d.registry = NewRegistry(host, store, wl, sealer, ctx)
+	d.startedAt = time.Now()
+
+	go d.hupLoop(ctx)
+
+	if err := d.registry.ReloadWhitelist(); err != nil {
+		return fmt.Errorf("federation: initial whitelist load: %w", err)
+	}
+
+	log.Printf("[federation] registry running (%d watchers)", len(d.registry.List()))
+
+	<-ctx.Done()
+	d.registry.StopAll()
+	return nil
+}
+
+// hupLoop reloads the whitelist on SIGHUP. SIGHUP is POSIX-only; on
+// Windows the signal is never delivered and this goroutine simply
+// blocks on ctx.Done until shutdown.
+func (d *DeadManSwitch) hupLoop(ctx context.Context) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP)
+	defer signal.Stop(ch)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			log.Println("[whitelist] SIGHUP received, reloading")
+			if err := d.registry.ReloadWhitelist(); err != nil {
+				log.Printf("[whitelist] reload failed: %v", err)
+			}
+		}
 	}
 }

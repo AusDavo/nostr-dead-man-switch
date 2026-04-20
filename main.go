@@ -35,7 +35,7 @@ func main() {
 	}
 
 	if *resetSession {
-		path := filepath.Join(filepath.Dir(cfg.StateFile), "session_secret")
+		path := filepath.Join(cfg.StateDir, "session_secret")
 		if err := rotateSessionSecret(path); err != nil {
 			log.Fatalf("Failed to rotate session secret: %v", err)
 		}
