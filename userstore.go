@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -110,6 +111,29 @@ func (u *UserStore) SaveConfigBytes(npub string, data []byte) error {
 		return err
 	}
 	return atomicWrite(filepath.Join(u.UserDir(npub), "config.json"), data, 0o600)
+}
+
+// LoadConfig reads and decodes the user's config.json into a UserConfig.
+func (u *UserStore) LoadConfig(npub string) (*UserConfig, error) {
+	data, err := u.LoadConfigBytes(npub)
+	if err != nil {
+		return nil, err
+	}
+	var c UserConfig
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("userstore: decoding config.json: %w", err)
+	}
+	return &c, nil
+}
+
+// SaveConfig encodes the UserConfig and atomically writes it to
+// config.json with mode 0600. Validation is the caller's responsibility.
+func (u *UserStore) SaveConfig(npub string, c *UserConfig) error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("userstore: encoding config.json: %w", err)
+	}
+	return u.SaveConfigBytes(npub, data)
 }
 
 // HasSealedNsec reports whether watcher.nsec.enc exists for this user.

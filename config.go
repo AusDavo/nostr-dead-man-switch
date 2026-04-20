@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -47,31 +48,60 @@ type Duration struct {
 	time.Duration
 }
 
+// parseDurationString accepts the forms the YAML decoder has always
+// accepted ("2d", "1w") and anything time.ParseDuration handles ("1h",
+// "30m", "1h30m", etc.). Shared by YAML and JSON (un)marshaling so both
+// encodings round-trip the same way.
+func parseDurationString(s string) (time.Duration, error) {
+	re := regexp.MustCompile(`^(\d+)([dw])$`)
+	if matches := re.FindStringSubmatch(s); matches != nil {
+		n, _ := strconv.Atoi(matches[1])
+		switch matches[2] {
+		case "d":
+			return time.Duration(n) * 24 * time.Hour, nil
+		case "w":
+			return time.Duration(n) * 7 * 24 * time.Hour, nil
+		}
+	}
+	return time.ParseDuration(s)
+}
+
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	var s string
 	if err := value.Decode(&s); err != nil {
 		return err
 	}
-	re := regexp.MustCompile(`^(\d+)([dwh])$`)
-	if matches := re.FindStringSubmatch(s); matches != nil {
-		n, _ := strconv.Atoi(matches[1])
-		switch matches[2] {
-		case "d":
-			d.Duration = time.Duration(n) * 24 * time.Hour
-			return nil
-		case "w":
-			d.Duration = time.Duration(n) * 7 * 24 * time.Hour
-			return nil
-		}
+	parsed, err := parseDurationString(s)
+	if err != nil {
+		return err
 	}
-	var err error
-	d.Duration, err = time.ParseDuration(s)
-	return err
+	d.Duration = parsed
+	return nil
+}
+
+// MarshalJSON emits the canonical Go-duration string (e.g. "1h0m0s").
+// Paired with UnmarshalJSON, this round-trips; the "2d"/"1w" forms from
+// YAML are accepted on input but not preserved through JSON.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Duration.String())
+}
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := parseDurationString(s)
+	if err != nil {
+		return err
+	}
+	d.Duration = parsed
+	return nil
 }
 
 type Action struct {
-	Type   string         `yaml:"type"`
-	Config map[string]any `yaml:"config"`
+	Type   string         `yaml:"type" json:"type"`
+	Config map[string]any `yaml:"config" json:"config"`
 }
 
 func LoadConfig(path string) (*Config, error) {
