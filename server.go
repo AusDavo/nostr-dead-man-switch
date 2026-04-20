@@ -258,8 +258,6 @@ func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusData struct {
-	WatchPubkey   string
-	BotNpub       string
 	LastSeen      string
 	SilenceAge    string
 	Threshold     string
@@ -441,7 +439,6 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 	d.state.mu.Lock()
 	silence := time.Since(d.state.LastSeen)
 	data := statusData{
-		WatchPubkey:  truncateMiddle(d.cfg.WatchPubkey, 20),
 		LastSeen:     d.state.LastSeen.In(loc).Format(tfmt),
 		SilenceAge:   humanDuration(silence),
 		Threshold:    humanDuration(d.cfg.SilenceThreshold.Duration),
@@ -485,11 +482,6 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 		data.StatusLabel = "Triggered"
 	}
 
-	// Bot npub for display
-	if npub, err := formatNpub(d.cfg.botPubkeyHex); err == nil {
-		data.BotNpub = truncateMiddle(npub, 20)
-	}
-
 	data.Warnings = d.configWarnings()
 	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
 		data.LoggedIn = true
@@ -499,17 +491,12 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 	statusTemplate.Execute(w, data)
 }
 
-type federationStatusRow struct {
-	Npub         string
-	Short        string
-	LastSeen     string
-	WarningsSent int
-	Triggered    bool
-}
-
 type federationStatusData struct {
 	StartedAt string
-	Watchers  []federationStatusRow
+	Total     int
+	Armed     int
+	Warning   int
+	Triggered int
 	LoggedIn  bool
 }
 
@@ -600,27 +587,21 @@ func (d *DeadManSwitch) handleStatusFederation(w http.ResponseWriter, r *http.Re
 	}
 	tfmt := "2006-01-02 15:04 MST"
 
-	var rows []federationStatusRow
-	if d.registry != nil {
-		for _, s := range d.registry.Snapshots() {
-			row := federationStatusRow{
-				Npub:         s.Npub,
-				Short:        truncateMiddle(s.Npub, 24),
-				WarningsSent: s.WarningsSent,
-				Triggered:    s.Triggered,
-			}
-			if !s.LastSeen.IsZero() {
-				row.LastSeen = s.LastSeen.In(loc).Format(tfmt)
-			} else {
-				row.LastSeen = "—"
-			}
-			rows = append(rows, row)
-		}
-	}
-
 	data := federationStatusData{
 		StartedAt: d.startedAt.In(loc).Format(tfmt),
-		Watchers:  rows,
+	}
+	if d.registry != nil {
+		for _, s := range d.registry.Snapshots() {
+			data.Total++
+			switch {
+			case s.Triggered:
+				data.Triggered++
+			case s.WarningsSent > 0:
+				data.Warning++
+			default:
+				data.Armed++
+			}
+		}
 	}
 	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
 		data.LoggedIn = true
@@ -881,20 +862,6 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
     {{end}}
   </div>
 
-  <div class="card">
-    <div class="card-title">Identity</div>
-    <div class="stat-grid">
-      <div>
-        <div class="stat-label">Watching</div>
-        <div class="stat-value" style="font-size:0.85rem">{{.WatchPubkey}}</div>
-      </div>
-      <div>
-        <div class="stat-label">Bot</div>
-        <div class="stat-value" style="font-size:0.85rem">{{.BotNpub}}</div>
-      </div>
-    </div>
-  </div>
-
   {{if .Triggered}}
   <div class="card" style="border-color: var(--red);">
     <div class="card-title" style="color: var(--red);">Triggered</div>
@@ -1029,48 +996,41 @@ var federationStatusTemplate = template.Must(template.New("federationStatus").Pa
   :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --green:#22c55e; --yellow:#eab308; --red:#ef4444; }
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
-  .container { max-width:640px; width:100%; }
+  .container { max-width:480px; width:100%; }
   h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.5rem; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
   .card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem; }
-  table { width:100%; border-collapse:collapse; font-size:0.85rem; }
-  th, td { padding:0.5rem 0; border-bottom:1px solid var(--border); text-align:left; }
-  th { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:500; }
-  td.npub { font-family:monospace; word-break:break-all; }
-  tr:last-child td { border-bottom:none; }
-  .empty { color:var(--muted); font-style:italic; padding:1rem 0; text-align:center; }
-  .state-ok { color:var(--green); }
-  .state-triggered { color:var(--red); font-weight:600; }
+  .stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; }
+  .stat { text-align:center; }
+  .stat-label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.35rem; }
+  .stat-value { font-size:1.5rem; font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat.armed .stat-value { color:var(--green); }
+  .stat.warning .stat-value { color:var(--yellow); }
+  .stat.triggered .stat-value { color:var(--red); }
+  .empty { color:var(--muted); font-style:italic; text-align:center; padding:0.5rem 0; }
   .footer { text-align:center; font-size:0.7rem; color:var(--muted); margin-top:1rem; }
   .footer a { color:var(--muted); }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>Dead Man's Switch — federation</h1>
+  <h1>Dead Man's Switch</h1>
   <div class="card">
-    <div class="card-title">Watchers ({{len .Watchers}})</div>
-    {{if .Watchers}}
-    <table>
-      <thead><tr><th>npub</th><th>last seen</th><th>warns</th><th>state</th></tr></thead>
-      <tbody>
-      {{range .Watchers}}
-      <tr>
-        <td class="npub">{{.Short}}</td>
-        <td>{{.LastSeen}}</td>
-        <td>{{.WarningsSent}}</td>
-        <td>{{if .Triggered}}<span class="state-triggered">triggered</span>{{else}}<span class="state-ok">armed</span>{{end}}</td>
-      </tr>
-      {{end}}
-      </tbody>
-    </table>
+    <div class="card-title">Watchers</div>
+    {{if .Total}}
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-label">Total</div><div class="stat-value">{{.Total}}</div></div>
+      <div class="stat armed"><div class="stat-label">Armed</div><div class="stat-value">{{.Armed}}</div></div>
+      <div class="stat warning"><div class="stat-label">Warning</div><div class="stat-value">{{.Warning}}</div></div>
+      <div class="stat triggered"><div class="stat-label">Triggered</div><div class="stat-value">{{.Triggered}}</div></div>
+    </div>
     {{else}}
-    <div class="empty">No watchers running. Whitelist an npub and wait for its self-DM enrollment.</div>
+    <div class="empty">No watchers running.</div>
     {{end}}
   </div>
   <div class="footer">
     Running since {{.StartedAt}}<br>
-    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a> · <a href="/config">config</a>{{else}}<a href="/login">sign in</a>{{end}}
+    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a>{{else}}<a href="/login">sign in</a>{{end}}
   </div>
 </div>
 </body>

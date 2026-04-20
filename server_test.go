@@ -109,11 +109,14 @@ func TestFederationModeBootsHTTPServer(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", resp.StatusCode)
 	}
-	if !strings.Contains(string(body), "federation") {
-		t.Fatalf("status page missing federation header; body=%s", string(body))
+	if !strings.Contains(string(body), "Watchers") {
+		t.Fatalf("status page missing Watchers card; body=%s", string(body))
 	}
-	if !strings.Contains(string(body), truncateMiddle(npub, 24)) {
-		t.Fatalf("status page missing enrolled npub")
+	if strings.Contains(string(body), "npub1") {
+		t.Fatalf("public / should not leak per-user npubs; body=%s", string(body))
+	}
+	if !strings.Contains(string(body), ">1<") {
+		t.Fatalf("aggregate total should render as 1; body=%s", string(body))
 	}
 
 	resp, err = client.Get(fx.srv.URL + "/login")
