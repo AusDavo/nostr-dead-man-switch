@@ -47,7 +47,6 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
 	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
 	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
-	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 
 	srv := &http.Server{Addr: d.cfg.ListenAddr, Handler: mux}
@@ -206,7 +205,7 @@ func (d *DeadManSwitch) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Legacy mode: no multi-tenancy, so /admin is just a thin signed-in
-	// landing page pointing to / and /config.
+	// landing page pointing to the read-only status view.
 	pubkey := d.sessions.pubkeyFromRequest(r)
 	npub, _ := formatNpub(pubkey)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -873,7 +872,7 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 
   <div class="footer">
     Running since {{.StartedAt}}<br>
-    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a> · <a href="/config">config</a>{{else}}<a href="/login">sign in</a>{{end}}
+    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a>{{else}}<a href="/login">sign in</a>{{end}}
   </div>
 </div>
 <script>setTimeout(()=>location.reload(), 60000)</script>
@@ -975,11 +974,10 @@ var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOC
     <div class="value">{{.Npub}}</div>
   </div>
   <div class="card">
-    <div class="muted">This instance is running in legacy single-user mode. The host config is edited in config.yaml on disk; the status page and /config are read-only views of it.</div>
+    <div class="muted">This instance is running in legacy single-user mode. The host config is edited in config.yaml on disk; the status page is a read-only view of it.</div>
   </div>
   <div class="actions">
     <a class="btn" href="/">Status</a>
-    <a class="btn" href="/config">Config</a>
     <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%">Sign out</button></form>
   </div>
 </div>

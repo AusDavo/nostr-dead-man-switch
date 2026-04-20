@@ -82,7 +82,6 @@ func newFederationDashboard(t *testing.T, enrolled []string) *federationDashboar
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
 	mux.HandleFunc("/logout", d.handleLogout)
 	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
-	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -248,7 +247,6 @@ func newAdminConfigFixture(t *testing.T) *adminConfigFixture {
 	mux.HandleFunc("/login", d.handleLogin)
 	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
-	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
 	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -280,59 +278,6 @@ func noRedirectClient(t *testing.T, base *http.Client) *http.Client {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}
-}
-
-func TestConfigFormRendersForRunningWatcher(t *testing.T) {
-	fx := newAdminConfigFixture(t)
-
-	req, _ := http.NewRequest("GET", fx.srv.URL+"/config", nil)
-	req.AddCookie(fx.sessionCookie())
-	resp, err := fx.srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	s := string(body)
-	if !strings.Contains(s, "<textarea") {
-		t.Fatalf("federation /config should render a <textarea>")
-	}
-	if !strings.Contains(s, fx.subjectNpub) {
-		t.Fatalf("rendered config missing subject npub")
-	}
-	if !strings.Contains(s, `id="csrf"`) {
-		t.Fatalf("rendered config missing CSRF hidden input")
-	}
-}
-
-func TestConfigFormAbsentForUnenrolledSession(t *testing.T) {
-	fx := newAdminConfigFixture(t)
-
-	// Session for a pubkey that has no running watcher.
-	otherSk := nostr.GeneratePrivateKey()
-	otherPk, _ := nostr.GetPublicKey(otherSk)
-	cookie := &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(otherPk)}
-
-	req, _ := http.NewRequest("GET", fx.srv.URL+"/config", nil)
-	req.AddCookie(cookie)
-	resp, err := fx.srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if !strings.Contains(string(body), "No watcher running") {
-		t.Fatalf("expected 'No watcher running' message; got %s", string(body))
-	}
-	if strings.Contains(string(body), "<textarea") {
-		t.Fatalf("should not render textarea for unenrolled session")
 	}
 }
 
