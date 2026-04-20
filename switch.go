@@ -193,6 +193,8 @@ func (d *DeadManSwitch) runFederation(ctx context.Context) error {
 
 	log.Printf("[federation] registry running (%d watchers)", len(d.registry.List()))
 
+	d.startServer(ctx)
+
 	<-ctx.Done()
 	d.registry.StopAll()
 	return nil

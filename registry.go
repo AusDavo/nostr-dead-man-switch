@@ -307,6 +307,22 @@ func (r *Registry) IsRunning(npub string) bool {
 	return ok
 }
 
+// Snapshots returns a snapshot of every running watcher, in no particular
+// order. Intended for the status landing page.
+func (r *Registry) Snapshots() []WatcherSnapshot {
+	r.mu.RLock()
+	ws := make([]supervisedWatcher, 0, len(r.watchers))
+	for _, s := range r.watchers {
+		ws = append(ws, s.w)
+	}
+	r.mu.RUnlock()
+	out := make([]WatcherSnapshot, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, w.Snapshot())
+	}
+	return out
+}
+
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -21,10 +21,6 @@ const loginVerifyMaxBytes = 16 * 1024
 var placeholderRe = regexp.MustCompile(`\[[^\]\n]+\]`)
 
 func (d *DeadManSwitch) startServer(ctx context.Context) {
-	if d.cfg.FederationV1 {
-		log.Println("[server] federation mode: HTTP dashboard not yet wired (see #8)")
-		return
-	}
 	if d.cfg.ListenAddr == "" {
 		return
 	}
@@ -36,6 +32,9 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 		return
 	}
 	d.sessions = sm
+	if d.challenges == nil {
+		d.challenges = newChallengeStore()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", d.handleStatus)
@@ -46,6 +45,7 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/logout", d.handleLogout)
 	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
 	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
+	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
 
 	srv := &http.Server{Addr: d.cfg.ListenAddr, Handler: mux}
 
@@ -217,6 +217,20 @@ type healthResponse struct {
 }
 
 func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if d.cfg.FederationV1 {
+		snaps := []WatcherSnapshot{}
+		if d.registry != nil {
+			snaps = d.registry.Snapshots()
+		}
+		out := map[string]any{
+			"mode":     "federation",
+			"watchers": len(snaps),
+		}
+		json.NewEncoder(w).Encode(out)
+		return
+	}
+
 	d.state.mu.Lock()
 	resp := healthResponse{
 		Status:         d.currentStatus(),
@@ -231,7 +245,6 @@ func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
 		resp.ConfigWarnings = append(resp.ConfigWarnings, cw.Title)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -397,6 +410,11 @@ func (d *DeadManSwitch) currentStatus() string {
 }
 
 func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if d.cfg.FederationV1 {
+		d.handleStatusFederation(w, r)
+		return
+	}
+
 	loc := d.cfg.location
 	tfmt := "2006-01-02 15:04 MST"
 
@@ -459,6 +477,63 @@ func (d *DeadManSwitch) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	statusTemplate.Execute(w, data)
+}
+
+type federationStatusRow struct {
+	Npub         string
+	Short        string
+	LastSeen     string
+	WarningsSent int
+	Triggered    bool
+}
+
+type federationStatusData struct {
+	StartedAt string
+	Watchers  []federationStatusRow
+	LoggedIn  bool
+}
+
+// handleAdminConfig is wired here so the route registration compiles in
+// commit 2; the full POST handler lands in commit 3.
+func (d *DeadManSwitch) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+func (d *DeadManSwitch) handleStatusFederation(w http.ResponseWriter, r *http.Request) {
+	loc := d.cfg.location
+	if loc == nil {
+		loc = time.UTC
+	}
+	tfmt := "2006-01-02 15:04 MST"
+
+	var rows []federationStatusRow
+	if d.registry != nil {
+		for _, s := range d.registry.Snapshots() {
+			row := federationStatusRow{
+				Npub:         s.Npub,
+				Short:        truncateMiddle(s.Npub, 24),
+				WarningsSent: s.WarningsSent,
+				Triggered:    s.Triggered,
+			}
+			if !s.LastSeen.IsZero() {
+				row.LastSeen = s.LastSeen.In(loc).Format(tfmt)
+			} else {
+				row.LastSeen = "—"
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	data := federationStatusData{
+		StartedAt: d.startedAt.In(loc).Format(tfmt),
+		Watchers:  rows,
+	}
+	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
+		data.LoggedIn = true
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	federationStatusTemplate.Execute(w, data)
 }
 
 func humanDuration(d time.Duration) string {
@@ -845,6 +920,63 @@ var adminTemplate = template.Must(template.New("admin").Parse(`<!DOCTYPE html>
     <a class="btn" href="/">Status</a>
     <a class="btn" href="/config">Config</a>
     <form method="POST" action="/logout" style="flex:1;margin:0"><button type="submit" class="btn" style="width:100%">Sign out</button></form>
+  </div>
+</div>
+</body>
+</html>`))
+
+var federationStatusTemplate = template.Must(template.New("federationStatus").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dead Man's Switch · federation</title>
+<style>
+  :root { --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a; --text:#e1e4ed; --muted:#6b7194; --green:#22c55e; --yellow:#eab308; --red:#ef4444; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:2rem 1rem; display:flex; justify-content:center; }
+  .container { max-width:640px; width:100%; }
+  h1 { font-size:1.25rem; font-weight:600; margin-bottom:1.5rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1.25rem; margin-bottom:1rem; }
+  .card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:0.75rem; }
+  table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+  th, td { padding:0.5rem 0; border-bottom:1px solid var(--border); text-align:left; }
+  th { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:500; }
+  td.npub { font-family:monospace; word-break:break-all; }
+  tr:last-child td { border-bottom:none; }
+  .empty { color:var(--muted); font-style:italic; padding:1rem 0; text-align:center; }
+  .state-ok { color:var(--green); }
+  .state-triggered { color:var(--red); font-weight:600; }
+  .footer { text-align:center; font-size:0.7rem; color:var(--muted); margin-top:1rem; }
+  .footer a { color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Dead Man's Switch — federation</h1>
+  <div class="card">
+    <div class="card-title">Watchers ({{len .Watchers}})</div>
+    {{if .Watchers}}
+    <table>
+      <thead><tr><th>npub</th><th>last seen</th><th>warns</th><th>state</th></tr></thead>
+      <tbody>
+      {{range .Watchers}}
+      <tr>
+        <td class="npub">{{.Short}}</td>
+        <td>{{.LastSeen}}</td>
+        <td>{{.WarningsSent}}</td>
+        <td>{{if .Triggered}}<span class="state-triggered">triggered</span>{{else}}<span class="state-ok">armed</span>{{end}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">No watchers running. Whitelist an npub and wait for its self-DM enrollment.</div>
+    {{end}}
+  </div>
+  <div class="footer">
+    Running since {{.StartedAt}}<br>
+    <a href="/health">/health</a> · {{if .LoggedIn}}<a href="/admin">admin</a> · <a href="/config">config</a>{{else}}<a href="/login">sign in</a>{{end}}
   </div>
 </div>
 </body>
