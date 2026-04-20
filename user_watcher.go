@@ -526,6 +526,25 @@ func (w *UserWatcher) effectiveRelaysFor(uc *UserConfig) []string {
 	return nil
 }
 
+// Config returns a deep-copy snapshot of the current UserConfig. Callers
+// may mutate the returned value safely; it is not shared with the
+// watcher's internal state.
+func (w *UserWatcher) Config() *UserConfig {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.userCfg == nil {
+		return nil
+	}
+	uc := *w.userCfg
+	if w.userCfg.Relays != nil {
+		uc.Relays = append([]string(nil), w.userCfg.Relays...)
+	}
+	if w.userCfg.Actions != nil {
+		uc.Actions = append([]Action(nil), w.userCfg.Actions...)
+	}
+	return &uc
+}
+
 // Snapshot returns the current public-facing view of the watcher.
 func (w *UserWatcher) Snapshot() WatcherSnapshot {
 	w.mu.RLock()

@@ -493,10 +493,71 @@ type federationStatusData struct {
 	LoggedIn  bool
 }
 
-// handleAdminConfig is wired here so the route registration compiles in
-// commit 2; the full POST handler lands in commit 3.
+const adminConfigMaxBytes = 64 * 1024
+
+// handleAdminConfig accepts a JSON UserConfig for the session's npub and
+// hands it to UserWatcher.PublishConfigDM. The federation fabric (#7)
+// propagates the change to peers. Only available in federation mode.
 func (d *DeadManSwitch) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !d.cfg.FederationV1 {
+		http.Error(w, "config editing via web is federation-mode only", http.StatusServiceUnavailable)
+		return
+	}
+	pubkey := d.sessions.pubkeyFromRequest(r)
+	// requireAuth already rejects unauthed requests, but belt-and-braces:
+	if pubkey == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	token := r.Header.Get("X-CSRF-Token")
+	if token == "" || !d.sessions.verifyCSRFToken(pubkey, token) {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return
+	}
+	npub, err := formatNpub(pubkey)
+	if err != nil {
+		http.Error(w, "bad session pubkey", http.StatusInternalServerError)
+		return
+	}
+	if d.registry == nil {
+		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	watcher := d.registry.Get(npub)
+	if watcher == nil {
+		http.Error(w, "no watcher running for your npub", http.StatusNotFound)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, adminConfigMaxBytes))
+	if err != nil {
+		http.Error(w, "body too large", http.StatusBadRequest)
+		return
+	}
+	var uc UserConfig
+	if err := json.Unmarshal(body, &uc); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uc.SubjectNpub = npub
+	// Validate early so we can return 400 on obvious errors. PublishConfigDM
+	// re-validates once it has assigned a monotonic UpdatedAt; this sentinel
+	// value is replaced before the real validation.
+	uc.UpdatedAt = time.Now()
+	if err := uc.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if _, err := watcher.PublishConfigDM(r.Context(), &uc); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/config", http.StatusSeeOther)
 }
 
 func (d *DeadManSwitch) handleStatusFederation(w http.ResponseWriter, r *http.Request) {

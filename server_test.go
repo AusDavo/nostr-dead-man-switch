@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -135,6 +136,346 @@ func TestFederationModeBootsHTTPServer(t *testing.T) {
 	resp.Body.Close()
 	if health["mode"] != "federation" {
 		t.Fatalf("health mode = %v, want federation", health["mode"])
+	}
+}
+
+// insertRunningWatcher inserts a *UserWatcher into the registry's
+// internal map without starting a goroutine. Registry.Get(npub) will
+// return w. Only for tests: production code goes through Start.
+func insertRunningWatcher(r *Registry, npub string, w *UserWatcher) {
+	done := make(chan struct{})
+	close(done)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.watchers[npub] = &supervised{
+		w:        w,
+		concrete: w,
+		cancel:   func() {},
+		done:     done,
+		uc:       w.Config(),
+	}
+}
+
+// adminConfigFixture spins up a real *UserWatcher (with a captured
+// publishFn) behind a federation-mode dashboard. Used for POST
+// /admin/config tests.
+type adminConfigFixture struct {
+	srv         *httptest.Server
+	d           *DeadManSwitch
+	subjectSk   string
+	subjectPk   string
+	subjectNpub string
+	store       *UserStore
+	watcher     *UserWatcher
+	published   *[]nostr.Event
+}
+
+func newAdminConfigFixture(t *testing.T) *adminConfigFixture {
+	t.Helper()
+	dir := t.TempDir()
+
+	subjectSk := nostr.GeneratePrivateKey()
+	subjectPk, _ := nostr.GetPublicKey(subjectSk)
+	subjectNpub, err := nip19.EncodePublicKey(subjectPk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watcherSk := nostr.GeneratePrivateKey()
+
+	store, err := NewUserStore(filepath.Join(dir, "users"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateUser(subjectNpub); err != nil {
+		t.Fatal(err)
+	}
+
+	wl, err := LoadWhitelist(filepath.Join(dir, "whitelist.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wl.Add(subjectNpub, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	host := &HostConfig{Relays: []string{"wss://relay.example.invalid"}}
+	uc := &UserConfig{
+		SubjectNpub:      subjectNpub,
+		Relays:           []string{"wss://relay.example.invalid"},
+		SilenceThreshold: Duration{24 * time.Hour},
+		WarningInterval:  Duration{2 * time.Hour},
+		WarningCount:     2,
+		CheckInterval:    Duration{time.Minute},
+		UpdatedAt:        time.Unix(1700000000, 0).UTC(),
+	}
+	if err := store.SaveConfig(subjectNpub, uc); err != nil {
+		t.Fatal(err)
+	}
+
+	watcher, err := NewUserWatcher(host, uc, watcherSk, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := []nostr.Event{}
+	watcher.publishFn = func(ctx context.Context, relays []string, ev nostr.Event) error {
+		published = append(published, ev)
+		return nil
+	}
+
+	r := NewRegistry(host, store, wl, nil, context.Background())
+	insertRunningWatcher(r, subjectNpub, watcher)
+
+	cfg := &Config{
+		FederationV1: true,
+		StateFile:    filepath.Join(dir, "state.json"),
+	}
+	sm, err := newSessionManager(filepath.Join(dir, "session_secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &DeadManSwitch{
+		cfg:        cfg,
+		sessions:   sm,
+		challenges: &challengeStore{m: map[string]time.Time{}},
+		registry:   r,
+		startedAt:  time.Now(),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", d.handleLogin)
+	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
+	mux.HandleFunc("/login/verify", d.handleLoginVerify)
+	mux.HandleFunc("/config", d.requireAuth(d.handleConfig))
+	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	return &adminConfigFixture{
+		srv:         srv,
+		d:           d,
+		subjectSk:   subjectSk,
+		subjectPk:   subjectPk,
+		subjectNpub: subjectNpub,
+		store:       store,
+		watcher:     watcher,
+		published:   &published,
+	}
+}
+
+func (fx *adminConfigFixture) sessionCookie() *http.Cookie {
+	return &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(fx.subjectPk)}
+}
+
+func (fx *adminConfigFixture) csrfToken() string {
+	return fx.d.sessions.issueCSRFToken(fx.subjectPk)
+}
+
+func noRedirectClient(t *testing.T, base *http.Client) *http.Client {
+	t.Helper()
+	return &http.Client{
+		Transport: base.Transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func TestConfigFormRendersForRunningWatcher(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/config", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	s := string(body)
+	if !strings.Contains(s, "<textarea") {
+		t.Fatalf("federation /config should render a <textarea>")
+	}
+	if !strings.Contains(s, fx.subjectNpub) {
+		t.Fatalf("rendered config missing subject npub")
+	}
+	if !strings.Contains(s, `id="csrf"`) {
+		t.Fatalf("rendered config missing CSRF hidden input")
+	}
+}
+
+func TestConfigFormAbsentForUnenrolledSession(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	// Session for a pubkey that has no running watcher.
+	otherSk := nostr.GeneratePrivateKey()
+	otherPk, _ := nostr.GetPublicKey(otherSk)
+	cookie := &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(otherPk)}
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/config", nil)
+	req.AddCookie(cookie)
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "No watcher running") {
+		t.Fatalf("expected 'No watcher running' message; got %s", string(body))
+	}
+	if strings.Contains(string(body), "<textarea") {
+		t.Fatalf("should not render textarea for unenrolled session")
+	}
+}
+
+func TestAdminConfigPublishes(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	newCfg := map[string]any{
+		"subject_npub":      fx.subjectNpub,
+		"silence_threshold": "48h0m0s",
+		"warning_interval":  "3h0m0s",
+		"warning_count":     3,
+		"check_interval":    "1m0s",
+		"relays":            []string{"wss://relay.example.invalid"},
+	}
+	payload, _ := json.Marshal(newCfg)
+
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d body=%s, want 303", resp.StatusCode, string(body))
+	}
+	if loc := resp.Header.Get("Location"); loc != "/config" {
+		t.Fatalf("Location = %q, want /config", loc)
+	}
+	if len(*fx.published) != 1 {
+		t.Fatalf("published %d events, want 1", len(*fx.published))
+	}
+
+	// Persisted UserConfig on disk reflects the new values (modulo
+	// UpdatedAt, which PublishConfigDM assigns).
+	stored, err := fx.store.LoadConfig(fx.subjectNpub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WarningCount != 3 {
+		t.Fatalf("stored warning_count = %d, want 3", stored.WarningCount)
+	}
+	if stored.SilenceThreshold.Duration != 48*time.Hour {
+		t.Fatalf("stored silence_threshold = %s, want 48h", stored.SilenceThreshold.Duration)
+	}
+}
+
+func TestAdminConfigRejectsInvalidCSRF(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	payload := []byte(`{"subject_npub":"` + fx.subjectNpub + `"}`)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", "not-a-real-token")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if len(*fx.published) != 0 {
+		t.Fatalf("should not have published on CSRF failure")
+	}
+}
+
+func TestAdminConfigRejectsNotRunning(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	otherSk := nostr.GeneratePrivateKey()
+	otherPk, _ := nostr.GetPublicKey(otherSk)
+	cookie := &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(otherPk)}
+	csrf := fx.d.sessions.issueCSRFToken(otherPk)
+
+	payload := []byte(`{}`)
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.AddCookie(cookie)
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAdminConfigRejectsBadJSON(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config",
+		bytes.NewReader([]byte(`{"this is not json`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestAdminConfigLegacyIs503(t *testing.T) {
+	// Build a DeadManSwitch with legacy Config (FederationV1=false) and
+	// confirm POST /admin/config returns 503.
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+
+	srv, d := testServer(t, pk)
+	defer srv.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
+	mux.HandleFunc("/login/verify", d.handleLoginVerify)
+	mux.HandleFunc("/admin/config", d.requireAuth(d.handleAdminConfig))
+	legacySrv := httptest.NewServer(mux)
+	defer legacySrv.Close()
+
+	cookie := &http.Cookie{Name: sessionCookieName, Value: d.sessions.issue(pk)}
+	req, _ := http.NewRequest("POST", legacySrv.URL+"/admin/config",
+		bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", d.sessions.issueCSRFToken(pk))
+	req.AddCookie(cookie)
+	resp, err := legacySrv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
 }
 
