@@ -19,8 +19,24 @@ func NewDeadManSwitch(cfg *Config, state *State) *DeadManSwitch {
 	return &DeadManSwitch{
 		cfg:        cfg,
 		state:      state,
-		monitor:    NewMonitor(cfg),
+		monitor:    NewMonitor(cfg.Relays, cfg.watchPubkeyHex),
 		challenges: newChallengeStore(),
+	}
+}
+
+// legacyUserConfig builds a *UserConfig from the legacy single-switch
+// Config fields so the shared ExecuteActions / SendWarningDM signatures
+// work transparently on the legacy path. Relays stays nil so the
+// host-level list is used.
+func (d *DeadManSwitch) legacyUserConfig() *UserConfig {
+	return &UserConfig{
+		SubjectNpub:      d.cfg.WatchPubkey,
+		WatcherPubkeyHex: d.cfg.botPubkeyHex,
+		SilenceThreshold: d.cfg.SilenceThreshold,
+		WarningInterval:  d.cfg.WarningInterval,
+		WarningCount:     d.cfg.WarningCount,
+		CheckInterval:    d.cfg.CheckInterval,
+		Actions:          d.cfg.Actions,
 	}
 }
 
@@ -102,7 +118,8 @@ func (d *DeadManSwitch) evaluate(ctx context.Context) {
 		log.Println("[TRIGGER] Dead man's switch activated!")
 		d.state.RecordTrigger()
 		d.state.Save(d.cfg.StateFile)
-		ExecuteActions(ctx, d.cfg, d.cfg.Actions)
+		ExecuteActions(ctx, d.cfg.Host(), d.legacyUserConfig(),
+			d.cfg.botPrivkeyHex, d.cfg.botPubkeyHex, d.cfg.watchPubkeyHex, d.cfg.Actions)
 		return
 	}
 
@@ -115,7 +132,8 @@ func (d *DeadManSwitch) evaluate(ctx context.Context) {
 	if warningsSent < expectedWarnings {
 		next := warningsSent + 1
 		log.Printf("[warning] Sending DM %d/%d", next, d.cfg.WarningCount)
-		if err := SendWarningDM(ctx, d.cfg, next); err != nil {
+		if err := SendWarningDM(ctx, d.cfg.Host(), d.legacyUserConfig(),
+			d.cfg.botPrivkeyHex, d.cfg.botPubkeyHex, d.cfg.watchPubkeyHex, next); err != nil {
 			log.Printf("[warning] DM failed: %v", err)
 		}
 		d.state.RecordWarning()

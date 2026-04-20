@@ -15,7 +15,8 @@ import (
 	"github.com/nbd-wtf/go-nostr/nip04"
 )
 
-func ExecuteActions(ctx context.Context, cfg *Config, actions []Action) {
+func ExecuteActions(ctx context.Context, host *HostConfig, uc *UserConfig,
+	watcherPrivHex, watcherPubHex, subjectPubHex string, actions []Action) {
 	for _, action := range actions {
 		log.Printf("[trigger] executing: %s", action.Type)
 		var err error
@@ -25,7 +26,7 @@ func ExecuteActions(ctx context.Context, cfg *Config, actions []Action) {
 		case "webhook":
 			err = executeWebhook(ctx, action.Config)
 		case "nostr_note":
-			err = executeNostrNote(ctx, cfg, action.Config)
+			err = executeNostrNote(ctx, host, uc, watcherPrivHex, watcherPubHex, action.Config)
 		case "nostr_event":
 			err = executeNostrEvent(ctx, action.Config)
 		default:
@@ -99,25 +100,38 @@ func executeWebhook(ctx context.Context, config map[string]any) error {
 	return nil
 }
 
-func executeNostrNote(ctx context.Context, cfg *Config, config map[string]any) error {
-	content := getString(config, "content")
-
-	relays := cfg.Relays
-	if r, ok := config["relays"].([]any); ok {
-		relays = make([]string, len(r))
+// resolveRelays picks the effective relay list for an outbound publish.
+// Per-action overrides win first, then per-user relays, then host relays.
+func resolveRelays(host *HostConfig, uc *UserConfig, actionCfg map[string]any) []string {
+	if r, ok := actionCfg["relays"].([]any); ok && len(r) > 0 {
+		out := make([]string, len(r))
 		for i, v := range r {
-			relays[i] = fmt.Sprint(v)
+			out[i] = fmt.Sprint(v)
 		}
+		return out
 	}
+	if uc != nil && len(uc.Relays) > 0 {
+		return uc.Relays
+	}
+	if host != nil {
+		return host.Relays
+	}
+	return nil
+}
+
+func executeNostrNote(ctx context.Context, host *HostConfig, uc *UserConfig,
+	watcherPrivHex, watcherPubHex string, config map[string]any) error {
+	content := getString(config, "content")
+	relays := resolveRelays(host, uc, config)
 
 	ev := nostr.Event{
-		PubKey:    cfg.botPubkeyHex,
+		PubKey:    watcherPubHex,
 		CreatedAt: nostr.Timestamp(time.Now().Unix()),
 		Kind:      1,
 		Content:   content,
 		Tags:      nostr.Tags{},
 	}
-	if err := ev.Sign(cfg.botPrivkeyHex); err != nil {
+	if err := ev.Sign(watcherPrivHex); err != nil {
 		return fmt.Errorf("signing note: %w", err)
 	}
 
@@ -175,17 +189,22 @@ func publishToRelays(ctx context.Context, relays []string, ev nostr.Event) error
 	return nil
 }
 
-// SendWarningDM sends an encrypted NIP-04 DM to the watched pubkey.
-func SendWarningDM(ctx context.Context, cfg *Config, warningNum int) error {
+// SendWarningDM sends an encrypted NIP-04 DM to the subject pubkey.
+func SendWarningDM(ctx context.Context, host *HostConfig, uc *UserConfig,
+	watcherPrivHex, watcherPubHex, subjectPubHex string, warningNum int) error {
+	warningMax := 0
+	if uc != nil {
+		warningMax = uc.WarningCount
+	}
 	content := fmt.Sprintf(
 		"Dead man's switch warning (%d/%d)\n\n"+
 			"No activity detected from your npub for the configured silence period. "+
 			"Post anything on Nostr to reset the timer.\n\n"+
 			"If no activity is detected after all warnings, the switch will trigger.",
-		warningNum, cfg.WarningCount,
+		warningNum, warningMax,
 	)
 
-	shared, err := nip04.ComputeSharedSecret(cfg.watchPubkeyHex, cfg.botPrivkeyHex)
+	shared, err := nip04.ComputeSharedSecret(subjectPubHex, watcherPrivHex)
 	if err != nil {
 		return fmt.Errorf("computing shared secret: %w", err)
 	}
@@ -196,17 +215,18 @@ func SendWarningDM(ctx context.Context, cfg *Config, warningNum int) error {
 	}
 
 	ev := nostr.Event{
-		PubKey:    cfg.botPubkeyHex,
+		PubKey:    watcherPubHex,
 		CreatedAt: nostr.Timestamp(time.Now().Unix()),
 		Kind:      4,
 		Content:   encrypted,
-		Tags:      nostr.Tags{nostr.Tag{"p", cfg.watchPubkeyHex}},
+		Tags:      nostr.Tags{nostr.Tag{"p", subjectPubHex}},
 	}
-	if err := ev.Sign(cfg.botPrivkeyHex); err != nil {
+	if err := ev.Sign(watcherPrivHex); err != nil {
 		return fmt.Errorf("signing DM: %w", err)
 	}
 
-	return publishToRelays(ctx, cfg.Relays, ev)
+	relays := resolveRelays(host, uc, nil)
+	return publishToRelays(ctx, relays, ev)
 }
 
 func getString(m map[string]any, key string) string {

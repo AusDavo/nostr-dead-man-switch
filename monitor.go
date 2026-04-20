@@ -16,29 +16,31 @@ type RelayStatus struct {
 }
 
 type Monitor struct {
-	cfg      *Config
-	eventCh  chan *nostr.Event
-	mu       sync.RWMutex
-	statuses map[string]*RelayStatus
+	relays        []string
+	subjectPubHex string
+	eventCh       chan *nostr.Event
+	mu            sync.RWMutex
+	statuses      map[string]*RelayStatus
 }
 
-func NewMonitor(cfg *Config) *Monitor {
+func NewMonitor(relays []string, subjectPubHex string) *Monitor {
 	statuses := make(map[string]*RelayStatus)
-	for _, url := range cfg.Relays {
+	for _, url := range relays {
 		statuses[url] = &RelayStatus{URL: url}
 	}
 	return &Monitor{
-		cfg:      cfg,
-		eventCh:  make(chan *nostr.Event, 100),
-		statuses: statuses,
+		relays:        relays,
+		subjectPubHex: subjectPubHex,
+		eventCh:       make(chan *nostr.Event, 100),
+		statuses:      statuses,
 	}
 }
 
 func (m *Monitor) Statuses() []RelayStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	result := make([]RelayStatus, 0, len(m.cfg.Relays))
-	for _, url := range m.cfg.Relays {
+	result := make([]RelayStatus, 0, len(m.relays))
+	for _, url := range m.relays {
 		if s, ok := m.statuses[url]; ok {
 			result = append(result, *s)
 		}
@@ -61,7 +63,7 @@ func (m *Monitor) Events() <-chan *nostr.Event {
 
 func (m *Monitor) Start(ctx context.Context, since time.Time) {
 	ts := nostr.Timestamp(since.Unix())
-	for _, url := range m.cfg.Relays {
+	for _, url := range m.relays {
 		go m.subscribeRelay(ctx, url, ts)
 	}
 }
@@ -84,7 +86,7 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		m.setStatus(url, true, "")
 
 		filters := nostr.Filters{{
-			Authors: []string{m.cfg.watchPubkeyHex},
+			Authors: []string{m.subjectPubHex},
 			Since:   &since,
 		}}
 
@@ -117,13 +119,13 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 
 // FetchLatestEvent queries relays for the most recent event from the watched pubkey.
 func (m *Monitor) FetchLatestEvent(ctx context.Context) (*nostr.Event, error) {
-	for _, url := range m.cfg.Relays {
+	for _, url := range m.relays {
 		relay, err := nostr.RelayConnect(ctx, url)
 		if err != nil {
 			continue
 		}
 		events, err := relay.QuerySync(ctx, nostr.Filter{
-			Authors: []string{m.cfg.watchPubkeyHex},
+			Authors: []string{m.subjectPubHex},
 			Limit:   1,
 		})
 		relay.Close()
