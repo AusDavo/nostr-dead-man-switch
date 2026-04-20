@@ -131,6 +131,15 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	cfg.rawYAML = raw
 
+	// Default federation_v1 to true when watch_pubkey is empty and the
+	// operator did not set federation_v1 explicitly. Legacy deployments
+	// with watch_pubkey set keep the legacy mode; explicit
+	// `federation_v1: false` always wins.
+	_, fedExplicit := raw["federation_v1"]
+	if !fedExplicit && cfg.WatchPubkey == "" {
+		cfg.FederationV1 = true
+	}
+
 	// Decode watch pubkey (npub or hex)
 	if strings.HasPrefix(cfg.WatchPubkey, "npub") {
 		_, v, err := nip19.Decode(cfg.WatchPubkey)

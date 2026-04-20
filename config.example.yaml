@@ -4,7 +4,14 @@
 
 # ── Identity ──────────────────────────────────────────────
 
-# The npub (or hex pubkey) to monitor for activity
+# Federation v1 (multi-tenant mode): the bot supervises a whitelist of
+# enrolled npubs, each with their own per-user config pushed via self-DM
+# from the dashboard. Default is `true` when watch_pubkey is empty.
+# Set to false explicitly to run the legacy single-switch mode below.
+# federation_v1: true  # default; set to false for legacy single-switch mode
+
+# Legacy single-switch mode: the npub (or hex pubkey) to monitor.
+# Leave empty (or remove) to run in federation v1 mode.
 watch_pubkey: "npub1..."
 
 # Bot's private key for sending warning DMs
