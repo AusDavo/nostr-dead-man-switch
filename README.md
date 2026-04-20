@@ -93,6 +93,9 @@ See [config.example.yaml](config.example.yaml) for the full reference. Key setti
 | `check_interval` | `1h` | How often to evaluate the timer |
 | `listen_addr` | — | Status page address (e.g. `:8080`). Empty = disabled |
 | `state_file` | `state.json` | Where to persist state |
+| `federation_v1` | auto | Multi-tenant mode. Defaults to `true` when `watch_pubkey` is empty; set to `false` explicitly to force legacy single-switch mode |
+| `whitelist_file` | `<state_dir>/whitelist.json` | Federation only — enrolled npubs this deployment supervises |
+| `state_dir` | `dir(state_file)` | Federation only — per-user state files live here |
 
 Non-secret config (hosts, ports, addresses) goes directly in `config.yaml`. Only passwords, tokens, and webhook URLs go in `.env` (see [.env.example](.env.example)) and are referenced via `${VAR_NAME}`.
 
@@ -227,7 +230,9 @@ Then paste the full signed JSON:
 
 Set `listen_addr: ":8080"` in your config to enable a status dashboard. Shows current silence duration, timer progress, warning state, and connected relays. Auto-refreshes every 60 seconds.
 
-The status page is public and read-only. An authenticated `/admin` area (Nostr sign-in via a NIP-07 browser extension such as [Alby](https://getalby.com) or [nos2x](https://github.com/fiatjaf/nos2x)) is also available — only the key set as `watch_pubkey` can sign in. Configuration editing through this UI will ship progressively, tracked in [issue #1](https://github.com/AusDavo/nostr-dead-man-switch/issues/1). Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
+The status page is public and read-only. An authenticated `/config` area (Nostr sign-in via a NIP-07 browser extension such as [Alby](https://getalby.com) or [nos2x](https://github.com/fiatjaf/nos2x)) lets you view the effective config and — in federation mode — edit your own `UserConfig` live. Saved config is published as a self-DM to the watcher nsec, and every peer in the federation picks up the update through the propagation fabric described below.
+
+In legacy mode only the key set as `watch_pubkey` can sign in. In federation mode any enrolled, whitelisted npub can sign in and edit its own config; other users' rows on the status page stay read-only. Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
 
 A `/health` JSON endpoint is also available for monitoring:
 
@@ -254,15 +259,38 @@ Use a dedicated keypair for the bot. Do **not** use your main nsec.
 
 ## Roadmap
 
-- [Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1) — edit `config.yaml` and actions through the existing status page instead of shell + YAML, so non-technical users can maintain their own switch.
-- [Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2) — one deployment serves multiple users, each with their own pubkey, bot key, and actions. Lets a trusted operator offer a dead-man switch to friends and family who can't self-host. Depends on the dashboard landing first.
+- [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — shipped. Authenticated `/config` page lets each user edit their own `UserConfig` JSON and persists updates via self-DM propagation.
+- [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — shipped as federation v1. One deployment supervises a whitelist of enrolled npubs, each with their own bot key, actions, and timing. See the section below.
+- Cross-peer fire coordination (federation v2) — staggered fire slots + receipts so multiple active peers don't double-send actions. v1 limitations described below.
 
-## Federation v1: config propagation
+## Federation v1
 
-In multi-tenant (federation) mode, peer watchers share the subject's
-watcher nsec so any active peer can evaluate the switch. To keep the
-effective `UserConfig` consistent across peers without an out-of-band
-sync channel, v1 uses **self-DMs as the propagation fabric**:
+Federation mode turns one deployment into an "Uncle Jim" dead-man switch that
+supervises a whitelist of enrolled npubs. Each enrolled user has their own
+timing, relays, actions, and bot-key-wrapped `UserConfig` — but shares one
+running process and one set of relay connections.
+
+**Turning it on.** Leaving `watch_pubkey` empty flips `federation_v1: true`
+automatically. Set `federation_v1: false` explicitly in `config.yaml` to force
+the legacy single-switch mode regardless of `watch_pubkey`.
+
+**Enrolling users.** Add npubs to the whitelist with the CLI:
+
+```bash
+./nostr-deadman --whitelist-add npub1...
+./nostr-deadman --whitelist-list
+./nostr-deadman --whitelist-remove npub1...
+```
+
+Once enrolled, a user signs in at `/config` with their NIP-07 extension and
+edits their own `UserConfig` JSON in-browser. Saves are published as NIP-44
+self-DMs signed by their watcher nsec and picked up by every peer.
+
+### Config propagation
+
+Peer watchers share the subject's watcher nsec so any active peer can evaluate
+the switch. To keep the effective `UserConfig` consistent across peers without
+an out-of-band sync channel, v1 uses **self-DMs as the propagation fabric**:
 
 - Every peer publishes its desired config as a kind-4 event authored by
   the watcher pubkey, `p`-tagged to itself, with `content` set to a
@@ -294,8 +322,9 @@ would break propagation on real deployments. Revisit in v2 once NIPs
   evaluates silence against its own view. Cross-peer PoL attestation is
   a v2 item.
 
-`federation_v1` stays `false` by default in this release; the
-federated evaluate path is inert on legacy single-switch deployments.
+`federation_v1` defaults to `true` when `watch_pubkey` is empty and to `false`
+otherwise; the federated evaluate path is inert on legacy single-switch
+deployments.
 
 ## License
 
