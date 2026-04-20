@@ -104,8 +104,12 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 		http.Error(w, "auth unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if d.cfg.watchPubkeyHex == "" {
+	if !d.cfg.FederationV1 && d.cfg.watchPubkeyHex == "" {
 		http.Error(w, "watch_pubkey not configured; dashboard login disabled", http.StatusServiceUnavailable)
+		return
+	}
+	if d.cfg.FederationV1 && d.registry == nil {
+		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -143,15 +147,47 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	pubkey, err := verifyAuthEvent(payload.SignedEvent, challenge, d.cfg.watchPubkeyHex)
+	// In federation mode we accept any signer whose npub is whitelisted
+	// and has a running watcher. The signer check runs after we verify
+	// the event signature against the signer's own pubkey.
+	expectedPub := d.cfg.watchPubkeyHex
+	if d.cfg.FederationV1 {
+		expectedPub = ""
+	}
+	pubkey, err := verifyAuthEvent(payload.SignedEvent, challenge, expectedPub)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if !d.isAuthorizedLogin(pubkey) {
+		http.Error(w, "pubkey not authorized", http.StatusUnauthorized)
 		return
 	}
 
 	d.sessions.setCookie(w, r, d.sessions.issue(pubkey))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"redirect": "/admin"})
+}
+
+// isAuthorizedLogin reports whether the given hex pubkey can establish a
+// dashboard session. In federation mode it delegates to the registry: the
+// npub must be whitelisted and have a running watcher. In legacy mode it
+// matches the single configured watch_pubkey.
+func (d *DeadManSwitch) isAuthorizedLogin(pubHex string) bool {
+	if pubHex == "" {
+		return false
+	}
+	if d.cfg.FederationV1 {
+		if d.registry == nil {
+			return false
+		}
+		npub, err := formatNpub(pubHex)
+		if err != nil {
+			return false
+		}
+		return d.registry.IsWhitelisted(npub) && d.registry.IsRunning(npub)
+	}
+	return pubHex == d.cfg.watchPubkeyHex
 }
 
 func (d *DeadManSwitch) handleLogout(w http.ResponseWriter, r *http.Request) {

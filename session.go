@@ -19,6 +19,7 @@ const (
 	sessionCookieName = "dms_session"
 	sessionTTL        = 30 * 24 * time.Hour
 	sessionSecretLen  = 32
+	csrfTokenTTL      = 1 * time.Hour
 )
 
 type sessionManager struct {
@@ -127,6 +128,42 @@ func (s *sessionManager) clearCookie(w http.ResponseWriter) {
 		HttpOnly: true,
 		MaxAge:   -1,
 	})
+}
+
+// issueCSRFToken returns an HMAC-signed token bound to pubkey and a short
+// TTL. Stateless: verified later with the same session secret. Format:
+// base64url(pubkey|expiryUnix|hmac).
+func (s *sessionManager) issueCSRFToken(pubkey string) string {
+	exp := time.Now().Add(csrfTokenTTL).Unix()
+	payload := pubkey + "|" + strconv.FormatInt(exp, 10)
+	mac := s.sign("csrf|" + payload)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload + "|" + mac))
+}
+
+// verifyCSRFToken checks that token was issued for pubkey and has not
+// expired.
+func (s *sessionManager) verifyCSRFToken(pubkey, token string) bool {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(string(raw), "|")
+	if len(parts) != 3 {
+		return false
+	}
+	tokPub, expStr, mac := parts[0], parts[1], parts[2]
+	if tokPub != pubkey {
+		return false
+	}
+	expected := s.sign("csrf|" + tokPub + "|" + expStr)
+	if !hmac.Equal([]byte(mac), []byte(expected)) {
+		return false
+	}
+	exp, err := strconv.ParseInt(expStr, 10, 64)
+	if err != nil {
+		return false
+	}
+	return time.Now().Unix() <= exp
 }
 
 func (s *sessionManager) pubkeyFromRequest(r *http.Request) string {

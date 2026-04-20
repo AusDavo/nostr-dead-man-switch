@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip19"
 )
 
 // testServer wires up just the auth handlers on a minimal DeadManSwitch,
@@ -195,6 +197,171 @@ func TestLoginFlow_ReplayRejected(t *testing.T) {
 		t.Fatalf("replay should not succeed")
 	}
 	resp.Body.Close()
+}
+
+// federationTestServer wires a DeadManSwitch with a federation-mode
+// Config and a Registry populated by the fakeFactory. enrolled npubs
+// come up as running watchers; whitelistedOnly npubs exist in the
+// whitelist but have no running watcher.
+func federationTestServer(t *testing.T, enrolled, whitelistedOnly []string) (*httptest.Server, *DeadManSwitch) {
+	t.Helper()
+	dir := t.TempDir()
+
+	store, err := NewUserStore(filepath.Join(dir, "users"))
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	wl, err := LoadWhitelist(filepath.Join(dir, "whitelist.json"))
+	if err != nil {
+		t.Fatalf("LoadWhitelist: %v", err)
+	}
+	ff := newFakeFactory()
+	r := NewRegistry(&HostConfig{}, store, wl, nil, context.Background())
+	r.newWatcher = ff.make
+
+	for _, n := range enrolled {
+		if err := wl.Add(n, ""); err != nil {
+			t.Fatalf("whitelist.Add: %v", err)
+		}
+		if err := store.CreateUser(n); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := store.SaveConfigBytes(n, []byte("{}")); err != nil {
+			t.Fatalf("SaveConfigBytes: %v", err)
+		}
+		if err := r.Start(n); err != nil {
+			t.Fatalf("Start %s: %v", n, err)
+		}
+	}
+	for _, n := range whitelistedOnly {
+		if err := wl.Add(n, ""); err != nil {
+			t.Fatalf("whitelist.Add: %v", err)
+		}
+	}
+	t.Cleanup(func() { r.StopAll() })
+
+	cfg := &Config{
+		FederationV1: true,
+		StateFile:    filepath.Join(dir, "state.json"),
+	}
+
+	sm, err := newSessionManager(filepath.Join(dir, "session_secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := &DeadManSwitch{
+		cfg:        cfg,
+		sessions:   sm,
+		challenges: &challengeStore{m: map[string]time.Time{}},
+		registry:   r,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", d.handleLogin)
+	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
+	mux.HandleFunc("/login/verify", d.handleLoginVerify)
+	return httptest.NewServer(mux), d
+}
+
+func getChallengeAndVerify(t *testing.T, srv *httptest.Server, sk string) *http.Response {
+	t.Helper()
+	client := srv.Client()
+	resp, err := client.Get(srv.URL + "/login/challenge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cr struct{ Challenge string }
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	signed := signChallenge(t, sk, cr.Challenge)
+	body, _ := json.Marshal(map[string]json.RawMessage{"signedEvent": signed})
+	resp, err = client.Post(srv.URL+"/login/verify", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestLoginVerify_FederationWhitelistedNpubSucceeds(t *testing.T) {
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+	npub, err := nip19.EncodePublicKey(pk)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, _ := federationTestServer(t, []string{npub}, nil)
+	defer srv.Close()
+
+	resp := getChallengeAndVerify(t, srv, sk)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, b)
+	}
+}
+
+func TestLoginVerify_FederationNonWhitelistedFails(t *testing.T) {
+	sk := nostr.GeneratePrivateKey()
+
+	enrolled := nostr.GeneratePrivateKey()
+	enrolledPk, _ := nostr.GetPublicKey(enrolled)
+	enrolledNpub, _ := nip19.EncodePublicKey(enrolledPk)
+
+	srv, _ := federationTestServer(t, []string{enrolledNpub}, nil)
+	defer srv.Close()
+
+	resp := getChallengeAndVerify(t, srv, sk)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 401", resp.StatusCode, b)
+	}
+}
+
+func TestLoginVerify_FederationEnrolledButNotRunningFails(t *testing.T) {
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+	npub, _ := nip19.EncodePublicKey(pk)
+
+	srv, _ := federationTestServer(t, nil, []string{npub})
+	defer srv.Close()
+
+	resp := getChallengeAndVerify(t, srv, sk)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d body=%s, want 401", resp.StatusCode, b)
+	}
+}
+
+func TestLoginVerify_LegacyStillMatchesSinglePubkey(t *testing.T) {
+	// Legacy path: only the configured watch_pubkey signer may log in.
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+
+	srv, _ := testServer(t, pk)
+	defer srv.Close()
+
+	resp := getChallengeAndVerify(t, srv, sk)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Attacker's signature is rejected.
+	attacker := nostr.GeneratePrivateKey()
+	srv2, _ := testServer(t, pk)
+	defer srv2.Close()
+	resp2 := getChallengeAndVerify(t, srv2, attacker)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("attacker status = %d, want 401", resp2.StatusCode)
+	}
 }
 
 func TestLoginFlow_WatchPubkeyUnset(t *testing.T) {

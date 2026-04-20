@@ -297,6 +297,16 @@ func (r *Registry) IsWhitelisted(npub string) bool {
 	return r.wl.Contains(npub)
 }
 
+// IsRunning reports whether a watcher goroutine is currently running for
+// npub. Distinct from Get, which returns the concrete *UserWatcher and is
+// nil for entries inserted by a test fake.
+func (r *Registry) IsRunning(npub string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.watchers[npub]
+	return ok
+}
+
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

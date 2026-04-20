@@ -119,6 +119,45 @@ func TestSession_SecretFilePermissions(t *testing.T) {
 	}
 }
 
+func TestCSRFRoundTrip(t *testing.T) {
+	sm := newTestSessionManager(t)
+	tok := sm.issueCSRFToken("alice")
+	if !sm.verifyCSRFToken("alice", tok) {
+		t.Fatalf("fresh token should verify")
+	}
+}
+
+func TestCSRFWrongPubkey(t *testing.T) {
+	sm := newTestSessionManager(t)
+	tok := sm.issueCSRFToken("alice")
+	if sm.verifyCSRFToken("bob", tok) {
+		t.Fatalf("token for alice must not verify for bob")
+	}
+}
+
+func TestCSRFExpiry(t *testing.T) {
+	sm := newTestSessionManager(t)
+	// Forge an expired token with a valid signature.
+	payload := "alice|1"
+	mac := sm.sign("csrf|" + payload)
+	expired := base64.RawURLEncoding.EncodeToString([]byte(payload + "|" + mac))
+	if sm.verifyCSRFToken("alice", expired) {
+		t.Fatalf("expired token must not verify")
+	}
+}
+
+func TestCSRFTampered(t *testing.T) {
+	sm := newTestSessionManager(t)
+	tok := sm.issueCSRFToken("alice")
+	raw, _ := base64.RawURLEncoding.DecodeString(tok)
+	parts := strings.Split(string(raw), "|")
+	parts[0] = "bob"
+	bad := base64.RawURLEncoding.EncodeToString([]byte(strings.Join(parts, "|")))
+	if sm.verifyCSRFToken("bob", bad) {
+		t.Fatalf("tampered pubkey must not verify")
+	}
+}
+
 func TestSession_NoCookieRequest(t *testing.T) {
 	sm := newTestSessionManager(t)
 	_ = time.Now()
