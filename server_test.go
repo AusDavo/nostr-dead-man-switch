@@ -361,8 +361,8 @@ func TestAdminConfigPublishes(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d body=%s, want 303", resp.StatusCode, string(body))
 	}
-	if loc := resp.Header.Get("Location"); loc != "/config" {
-		t.Fatalf("Location = %q, want /config", loc)
+	if loc := resp.Header.Get("Location"); loc != "/admin/config" {
+		t.Fatalf("Location = %q, want /admin/config", loc)
 	}
 	if len(*fx.published) != 1 {
 		t.Fatalf("published %d events, want 1", len(*fx.published))
@@ -476,6 +476,135 @@ func TestAdminConfigLegacyIs503(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestAdminConfigGetRendersForm(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/config", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	s := string(body)
+	for _, needle := range []string{
+		`id="silence_threshold"`,
+		`id="warning_interval"`,
+		`id="warning_count"`,
+		`id="check_interval"`,
+		`id="relays"`,
+		`id="add-action"`,
+		`id="action-template"`,
+		`id="save"`,
+	} {
+		if !strings.Contains(s, needle) {
+			t.Fatalf("form missing %s", needle)
+		}
+	}
+	// Initial UserConfig payload should be inlined verbatim as a JS literal.
+	if !strings.Contains(s, `"subject_npub":"`+fx.subjectNpub+`"`) {
+		t.Fatalf("initial JSON did not embed subject_npub; body=%s", s)
+	}
+}
+
+func TestAdminConfigGetRedirectsWhenNoWatcher(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	otherSk := nostr.GeneratePrivateKey()
+	otherPk, _ := nostr.GetPublicKey(otherSk)
+	cookie := &http.Cookie{Name: sessionCookieName, Value: fx.d.sessions.issue(otherPk)}
+
+	client := noRedirectClient(t, fx.srv.Client())
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/config", nil)
+	req.AddCookie(cookie)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin/watcher" {
+		t.Fatalf("Location = %q, want /admin/watcher", loc)
+	}
+}
+
+func TestAdminConfigSecretMaskPreserved(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	// Seed the watcher with a secret so the mask merge has something to
+	// preserve. Update the in-memory *UserWatcher + on-disk UserConfig.
+	uc := fx.watcher.Config()
+	uc.Actions = []Action{
+		{Type: "email", Config: map[string]any{
+			"smtp_host": "smtp.example.com",
+			"smtp_user": "bot@example.com",
+			"smtp_pass": "super-secret-old",
+			"to":        "you@example.com",
+			"subject":   "hi",
+			"body":      "body",
+		}},
+	}
+	uc.UpdatedAt = time.Now()
+	fx.watcher.ReloadConfig(uc)
+	if err := fx.store.SaveConfig(fx.subjectNpub, uc); err != nil {
+		t.Fatal(err)
+	}
+
+	// Client POSTs back the config with smtp_pass = maskedDisplay, meaning
+	// "I didn't touch it; keep what's there".
+	payload := map[string]any{
+		"subject_npub":      fx.subjectNpub,
+		"silence_threshold": "48h0m0s",
+		"warning_interval":  "3h0m0s",
+		"warning_count":     2,
+		"check_interval":    "1m0s",
+		"relays":            []string{"wss://relay.example.invalid"},
+		"actions": []map[string]any{{
+			"type": "email",
+			"config": map[string]any{
+				"smtp_host": "smtp.example.com",
+				"smtp_user": "bot@example.com",
+				"smtp_pass": maskedDisplay,
+				"to":        "you@example.com",
+				"subject":   "hi",
+				"body":      "body",
+			},
+		}},
+	}
+	raw, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := noRedirectClient(t, fx.srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	stored, err := fx.store.LoadConfig(fx.subjectNpub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(stored.Actions))
+	}
+	pass := getString(stored.Actions[0].Config, "smtp_pass")
+	if pass != "super-secret-old" {
+		t.Fatalf("smtp_pass = %q, want old value preserved", pass)
 	}
 }
 

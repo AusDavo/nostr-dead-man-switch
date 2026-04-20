@@ -515,14 +515,22 @@ type federationStatusData struct {
 
 const adminConfigMaxBytes = 64 * 1024
 
-// handleAdminConfig accepts a JSON UserConfig for the session's npub and
-// hands it to UserWatcher.PublishConfigDM. The federation fabric (#7)
-// propagates the change to peers. Only available in federation mode.
+// handleAdminConfig dispatches by method. GET renders the field-based
+// editor (federation only). POST accepts a JSON UserConfig, merges in
+// any secret-placeholder values the form preserved unchanged, and hands
+// the result to UserWatcher.PublishConfigDM.
 func (d *DeadManSwitch) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		d.handleAdminConfigGet(w, r)
+	case http.MethodPost:
+		d.handleAdminConfigPost(w, r)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
+
+func (d *DeadManSwitch) handleAdminConfigPost(w http.ResponseWriter, r *http.Request) {
 	if !d.cfg.FederationV1 {
 		http.Error(w, "config editing via web is federation-mode only", http.StatusServiceUnavailable)
 		return
@@ -564,6 +572,11 @@ func (d *DeadManSwitch) handleAdminConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	uc.SubjectNpub = npub
+	// Preserve secrets the UI rendered as maskedDisplay bullets rather than
+	// overwriting them with the placeholder. Matching is by action index +
+	// config key, so reordering actions will invalidate the merge — the UI
+	// must ask the user to re-enter secrets in that case.
+	mergeSecretMasks(&uc, watcher.Config())
 	// Validate early so we can return 400 on obvious errors. PublishConfigDM
 	// re-validates once it has assigned a monotonic UpdatedAt; this sentinel
 	// value is replaced before the real validation.
@@ -577,7 +590,7 @@ func (d *DeadManSwitch) handleAdminConfig(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/config", http.StatusSeeOther)
+	http.Redirect(w, r, "/admin/config", http.StatusSeeOther)
 }
 
 func (d *DeadManSwitch) handleStatusFederation(w http.ResponseWriter, r *http.Request) {
