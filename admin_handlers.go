@@ -782,6 +782,12 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   .msg.err { display:block; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.4); color:var(--red); }
   .msg.ok { display:block; background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.4); color:var(--green); }
   .card-actions { display:flex; gap:0.5rem; align-items:center; }
+  .dur { display:flex; gap:0.4rem; align-items:stretch; }
+  .dur .dur-n { flex:1; min-width:0; }
+  .dur .dur-u { flex:0 0 auto; width:auto; }
+  .dur .dur-raw { flex:1; }
+  .dur-toggle { background:none; border:none; color:var(--muted); font-size:0.7rem; cursor:pointer; padding:0.2rem 0; margin-top:0.15rem; font-family:inherit; }
+  .dur-toggle:hover { color:var(--accent); }
   details { background:var(--card); border:1px solid var(--border); border-radius:0.75rem; padding:1rem 1.25rem; margin-bottom:1rem; }
   details > summary { cursor:pointer; font-size:0.85rem; color:var(--muted); }
   details[open] > summary { margin-bottom:0.75rem; color:var(--text); }
@@ -801,12 +807,50 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   <div class="card">
     <h2>Timer</h2>
     <div class="grid-2">
-      <label><span class="k">Silence threshold</span><input id="silence_threshold" placeholder="720h"></label>
-      <label><span class="k">Warning interval</span><input id="warning_interval" placeholder="24h"></label>
+      <label>
+        <span class="k">Silence threshold</span>
+        <div class="dur" data-k="silence_threshold">
+          <input class="dur-n" type="number" min="1" step="1">
+          <select class="dur-u">
+            <option value="m">minutes</option>
+            <option value="h">hours</option>
+            <option value="d">days</option>
+            <option value="w">weeks</option>
+          </select>
+          <input class="dur-raw" type="text" placeholder="e.g. 1h30m" hidden>
+        </div>
+        <button type="button" class="dur-toggle" data-for="silence_threshold">Use raw duration</button>
+      </label>
+      <label>
+        <span class="k">Warning interval</span>
+        <div class="dur" data-k="warning_interval">
+          <input class="dur-n" type="number" min="1" step="1">
+          <select class="dur-u">
+            <option value="m">minutes</option>
+            <option value="h">hours</option>
+            <option value="d">days</option>
+            <option value="w">weeks</option>
+          </select>
+          <input class="dur-raw" type="text" placeholder="e.g. 1h30m" hidden>
+        </div>
+        <button type="button" class="dur-toggle" data-for="warning_interval">Use raw duration</button>
+      </label>
       <label><span class="k">Warning count</span><input id="warning_count" type="number" min="0"></label>
-      <label><span class="k">Check interval</span><input id="check_interval" placeholder="1h"></label>
+      <label>
+        <span class="k">Check interval</span>
+        <div class="dur" data-k="check_interval">
+          <input class="dur-n" type="number" min="1" step="1">
+          <select class="dur-u">
+            <option value="m">minutes</option>
+            <option value="h">hours</option>
+            <option value="d">days</option>
+            <option value="w">weeks</option>
+          </select>
+          <input class="dur-raw" type="text" placeholder="e.g. 1h30m" hidden>
+        </div>
+        <button type="button" class="dur-toggle" data-for="check_interval">Use raw duration</button>
+      </label>
     </div>
-    <div class="muted">Durations accept Go-style strings: "30m", "24h", "720h" (=30d).</div>
   </div>
 
   <div class="card">
@@ -894,11 +938,76 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   function $(id) { return document.getElementById(id); }
   function showMsg(cls, text) { const el = $('msg'); el.className = 'msg ' + cls; el.textContent = text; }
 
+  function durWrap(key) { return document.querySelector('.dur[data-k="' + key + '"]'); }
+
+  // parseGoToMinutes returns the total minutes represented by a Go duration
+  // string like "720h0m0s". Returns null if s has fractional minutes (sub-
+  // minute precision) or fails to parse.
+  function parseGoToMinutes(s) {
+    if (!s) return null;
+    const re = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+    const mult = { ns: 1/60e9, us: 1/60e6, 'µs': 1/60e6, ms: 1/60e3, s: 1/60, m: 1, h: 60 };
+    let total = 0, matched = false, m;
+    while ((m = re.exec(s)) !== null) {
+      matched = true;
+      total += parseFloat(m[1]) * mult[m[2]];
+    }
+    if (!matched) return null;
+    if (Math.abs(total - Math.round(total)) > 1e-9) return null;
+    return Math.round(total);
+  }
+
+  function bestUnit(minutes) {
+    if (minutes <= 0) return null;
+    if (minutes % 10080 === 0) return { n: minutes / 10080, u: 'w' };
+    if (minutes % 1440 === 0) return { n: minutes / 1440, u: 'd' };
+    if (minutes % 60 === 0) return { n: minutes / 60, u: 'h' };
+    return { n: minutes, u: 'm' };
+  }
+
+  function setDurMode(wrap, mode) {
+    wrap.dataset.mode = mode;
+    const showUnit = mode === 'unit';
+    wrap.querySelector('.dur-n').hidden = !showUnit;
+    wrap.querySelector('.dur-u').hidden = !showUnit;
+    wrap.querySelector('.dur-raw').hidden = showUnit;
+    const toggle = document.querySelector('.dur-toggle[data-for="' + wrap.dataset.k + '"]');
+    if (toggle) toggle.textContent = showUnit ? 'Use raw duration' : 'Use picker';
+  }
+
+  function setDur(key, s) {
+    const wrap = durWrap(key);
+    if (!wrap) return;
+    const minutes = parseGoToMinutes(s);
+    const best = minutes != null ? bestUnit(minutes) : null;
+    if (best) {
+      wrap.querySelector('.dur-n').value = best.n;
+      wrap.querySelector('.dur-u').value = best.u;
+      wrap.querySelector('.dur-raw').value = '';
+      setDurMode(wrap, 'unit');
+    } else {
+      wrap.querySelector('.dur-raw').value = s || '';
+      setDurMode(wrap, 'raw');
+    }
+  }
+
+  function getDur(key) {
+    const wrap = durWrap(key);
+    if (!wrap) return '';
+    if (wrap.dataset.mode === 'raw') {
+      return wrap.querySelector('.dur-raw').value.trim();
+    }
+    const n = wrap.querySelector('.dur-n').value.trim();
+    const u = wrap.querySelector('.dur-u').value;
+    if (!n) return '';
+    return n + u;
+  }
+
   function hydrate(uc) {
-    $('silence_threshold').value = uc.silence_threshold || '';
-    $('warning_interval').value = uc.warning_interval || '';
+    setDur('silence_threshold', uc.silence_threshold || '');
+    setDur('warning_interval', uc.warning_interval || '');
     $('warning_count').value = (uc.warning_count != null) ? uc.warning_count : 2;
-    $('check_interval').value = uc.check_interval || '';
+    setDur('check_interval', uc.check_interval || '');
     $('relays').value = (uc.relays || []).join('\n');
     const list = $('actions-list');
     list.innerHTML = '';
@@ -952,10 +1061,10 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   function collect() {
     const out = {
       subject_npub: subjectNpub,
-      silence_threshold: $('silence_threshold').value.trim(),
-      warning_interval: $('warning_interval').value.trim(),
+      silence_threshold: getDur('silence_threshold'),
+      warning_interval: getDur('warning_interval'),
       warning_count: parseInt($('warning_count').value || '0', 10),
-      check_interval: $('check_interval').value.trim(),
+      check_interval: getDur('check_interval'),
       relays: $('relays').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean),
       actions: []
     };
@@ -981,6 +1090,15 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   $('add-action').addEventListener('click', () => { addAction({type:'email', config:{}}); });
   $('relays-defaults').addEventListener('click', () => {
     $('relays').value = (hostRelays || []).join('\n');
+  });
+
+  document.querySelectorAll('.dur-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const wrap = durWrap(btn.dataset.for);
+      if (!wrap) return;
+      setDurMode(wrap, wrap.dataset.mode === 'raw' ? 'unit' : 'raw');
+    });
   });
 
   $('save').addEventListener('click', async () => {

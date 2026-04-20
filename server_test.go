@@ -330,6 +330,50 @@ func TestAdminConfigPublishes(t *testing.T) {
 	}
 }
 
+func TestAdminConfigAcceptsPickerDuration(t *testing.T) {
+	fx := newAdminConfigFixture(t)
+
+	newCfg := map[string]any{
+		"subject_npub":      fx.subjectNpub,
+		"silence_threshold": "30d",
+		"warning_interval":  "2d",
+		"warning_count":     2,
+		"check_interval":    "1h",
+		"relays":            []string{"wss://relay.example.invalid"},
+	}
+	payload, _ := json.Marshal(newCfg)
+
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/config", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", fx.csrfToken())
+	req.AddCookie(fx.sessionCookie())
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d body=%s, want 303", resp.StatusCode, string(body))
+	}
+
+	stored, err := fx.store.LoadConfig(fx.subjectNpub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SilenceThreshold.Duration != 30*24*time.Hour {
+		t.Fatalf("stored silence_threshold = %s, want 720h", stored.SilenceThreshold.Duration)
+	}
+	if stored.WarningInterval.Duration != 2*24*time.Hour {
+		t.Fatalf("stored warning_interval = %s, want 48h", stored.WarningInterval.Duration)
+	}
+	if stored.CheckInterval.Duration != time.Hour {
+		t.Fatalf("stored check_interval = %s, want 1h", stored.CheckInterval.Duration)
+	}
+}
+
 func TestAdminConfigRejectsInvalidCSRF(t *testing.T) {
 	fx := newAdminConfigFixture(t)
 
@@ -443,10 +487,10 @@ func TestAdminConfigGetRendersForm(t *testing.T) {
 	}
 	s := string(body)
 	for _, needle := range []string{
-		`id="silence_threshold"`,
-		`id="warning_interval"`,
+		`data-k="silence_threshold"`,
+		`data-k="warning_interval"`,
 		`id="warning_count"`,
-		`id="check_interval"`,
+		`data-k="check_interval"`,
 		`id="relays"`,
 		`id="add-action"`,
 		`id="action-template"`,
