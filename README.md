@@ -4,6 +4,10 @@ A Nostr-native dead man's switch. Instead of manual check-ins, it passively moni
 
 If you go silent for X days, it sends you a private DM as a last-resort check-in. No response? It tries once more. Still nothing? It triggers — sends emails, publishes notes, hits webhooks, whatever you've configured.
 
+## Status
+
+Pre-1.0, no tagged releases yet. Config schema, CLI flags, and state file format may change between commits. If you run this, pin to a specific commit, keep backups of your `config.yaml` and state files, and re-read this README before pulling updates. Tagged releases and published container images are planned before the project is submitted to Umbrel / Start9 app stores.
+
 ## Why this over existing tools
 
 Existing dead man's switches ([Aeterna](https://github.com/alpyxn/aeterna), [LastSignal](https://github.com/giovantenne/lastsignal)) require you to remember to check in on a schedule. That works until it doesn't — and the failure mode is *triggering when you're alive but forgot*.
@@ -207,6 +211,22 @@ Works with n8n, Zapier, Make, Home Assistant, custom APIs, etc.
       - "wss://nos.lol"
 ```
 
+### Encrypted Nostr DM (signed by bot)
+
+Sends a NIP-04 encrypted DM from the bot's npub to a single recipient. Only the recipient can read it.
+
+```yaml
+- type: nostr_dm
+  config:
+    to_npub: "npub1…"
+    content: |
+      If you're reading this, my dead man's switch has fired.
+      Instructions are in the shared vault under [location].
+    relays:                            # optional — inherits host list if blank
+      - "wss://relay.damus.io"
+      - "wss://nos.lol"
+```
+
 ### Pre-signed Nostr event (from YOUR identity)
 
 Sign an event with your own nsec ahead of time — the bot just publishes it. It appears as your post, not the bot's. The bot never sees your private key.
@@ -226,13 +246,23 @@ Then paste the full signed JSON:
       - "wss://nos.lol"
 ```
 
-## Status page
+## Dashboard
 
-Set `listen_addr: ":8080"` in your config to enable a status dashboard. Shows current silence duration, timer progress, warning state, and connected relays. Auto-refreshes every 60 seconds.
+Set `listen_addr: ":8080"` to enable the dashboard. Three surfaces:
 
-The status page is public and read-only. An authenticated `/config` area (Nostr sign-in via a NIP-07 browser extension such as [Alby](https://getalby.com) or [nos2x](https://github.com/fiatjaf/nos2x)) lets you view the effective config and — in federation mode — edit your own `UserConfig` live. Saved config is published as a self-DM to the watcher nsec, and every peer in the federation picks up the update through the propagation fabric described below.
+**Public status page (`/`).** Aggregate view of watchers — total, armed, warning, triggered. Public and read-only; no per-user state is leaked.
 
-In legacy mode only the key set as `watch_pubkey` can sign in. In federation mode any enrolled, whitelisted npub can sign in and edit its own config; other users' rows on the status page stay read-only. Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
+![Public status page](docs/screenshots/status.png)
+
+**Per-user admin (`/admin`).** Signed-in landing page for an enrolled user. Shows health, silence/trigger timer, warning progress, last-seen timestamp, connected relays, and any configuration issues. Sign in at `/login` with a NIP-07 browser extension such as [Alby](https://getalby.com) or [nos2x](https://github.com/fiatjaf/nos2x). In legacy mode only the key set as `watch_pubkey` can sign in; in federation mode any enrolled whitelisted npub can.
+
+![Per-user admin hub](docs/screenshots/admin-hub.png)
+
+**Per-user config (`/admin/config`).** Field-based form for editing your own timer, relays, and actions. Durations use a number + unit picker; each action card has a Test button that fires that single action live. Save publishes the new `UserConfig` as a self-DM and propagates to every peer in the federation.
+
+![Per-user config form](docs/screenshots/admin-config.png)
+
+Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
 
 A `/health` JSON endpoint is also available for monitoring:
 
@@ -251,16 +281,23 @@ The state file tracks:
 
 ## Generate a bot key
 
+In legacy single-user mode, use the CLI:
+
 ```bash
 docker compose run --rm deadman --generate-key
 ```
 
 Use a dedicated keypair for the bot. Do **not** use your main nsec.
 
+In federation mode, enrolled users generate or import their watcher nsec from `/admin/watcher` in the browser. Generate prints the nsec exactly once (save it to a password manager); import accepts an existing nsec. Either path seals the key at rest with the host's `DEADMAN_WATCHER_KEY` before writing it to disk.
+
+![Watcher bootstrap](docs/screenshots/admin-watcher.png)
+
 ## Roadmap
 
-- [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — shipped. Authenticated `/config` page lets each user edit their own `UserConfig` JSON and persists updates via self-DM propagation.
+- [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — shipped. Authenticated `/admin/config` form lets each user edit their own `UserConfig` and persists updates via self-DM propagation.
 - [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — shipped as federation v1. One deployment supervises a whitelist of enrolled npubs, each with their own bot key, actions, and timing. See the section below.
+- [**v0.1.0 release gate**](https://github.com/AusDavo/nostr-dead-man-switch/milestone/1) — CI, multi-arch GHCR image, versioned binary, CHANGELOG, schema versioning, and UI re-arm. Prerequisites for Umbrel / Start9 app store submission.
 - Cross-peer fire coordination (federation v2) — staggered fire slots + receipts so multiple active peers don't double-send actions. v1 limitations described below.
 
 ## Federation v1
@@ -282,9 +319,10 @@ the legacy single-switch mode regardless of `watch_pubkey`.
 ./nostr-deadman --whitelist-remove npub1...
 ```
 
-Once enrolled, a user signs in at `/config` with their NIP-07 extension and
-edits their own `UserConfig` JSON in-browser. Saves are published as NIP-44
-self-DMs signed by their watcher nsec and picked up by every peer.
+Once enrolled, a user signs in at `/login` with their NIP-07 extension,
+bootstraps a watcher nsec at `/admin/watcher`, and edits their config
+at `/admin/config`. Saves are published as NIP-44 self-DMs signed by
+their watcher nsec and picked up by every peer.
 
 ### Config propagation
 
