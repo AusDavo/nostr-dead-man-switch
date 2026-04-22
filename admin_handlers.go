@@ -412,6 +412,7 @@ type adminHubData struct {
 	StartedAt     string
 	WatcherNpub   string
 	HasNostrDM    bool
+	CSRF          string
 }
 
 // handleAdminFederation renders the per-user admin hub. If the user has
@@ -464,6 +465,7 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 		Triggered:    snap.Triggered,
 		Relays:       snap.RelayStatuses,
 		StartedAt:    d.startedAt.In(loc).Format(tfmt),
+		CSRF:         d.sessions.issueCSRFToken(pubkey),
 	}
 	if !snap.LastSeen.IsZero() {
 		data.LastSeen = snap.LastSeen.In(loc).Format(tfmt)
@@ -516,6 +518,28 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	adminHubTemplate.Execute(w, data)
+}
+
+// handleAdminCheckIn is the manual liveness signal — a fallback for
+// when the subject can't get a signed nostr event onto any configured
+// relay (travelling, signer unavailable, relays all down). Advances
+// LastSeen to now and clears pending warnings. Refused if the watcher
+// has already triggered.
+func (d *DeadManSwitch) handleAdminCheckIn(w http.ResponseWriter, r *http.Request) {
+	_, npub, ok := d.requireFederationPost(w, r)
+	if !ok {
+		return
+	}
+	watcher := d.registry.Get(npub)
+	if watcher == nil {
+		http.Redirect(w, r, "/admin/watcher", http.StatusSeeOther)
+		return
+	}
+	if err := watcher.ManualCheckIn(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 // snapshotStatus mirrors *DeadManSwitch.currentStatus but works on a
@@ -614,6 +638,12 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
       <span>Threshold: {{.Threshold}}</span>
       <span>Warnings: {{.WarningsSent}}/{{.WarningsMax}}</span>
     </div>
+    {{if not .Triggered}}
+    <form method="POST" action="/admin/check-in" style="margin-top:0.75rem">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn">Check in now</button>
+    </form>
+    {{end}}
   </div>
 
   <div class="card">

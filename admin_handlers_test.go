@@ -399,6 +399,163 @@ func TestAdminFederationRendersHubAfterEnroll(t *testing.T) {
 	}
 }
 
+// enrollForCheckIn imports a bot nsec so fx.reg has a running watcher
+// for fx.userNpub, then returns a test server wired with /admin and
+// /admin/check-in against the same DeadManSwitch.
+func enrollForCheckIn(t *testing.T, fx *watcherSetupFixture) *httptest.Server {
+	t.Helper()
+	botSk := nostr.GeneratePrivateKey()
+	nsec, _ := nip19.EncodePrivateKey(botSk)
+	form := url.Values{"csrf_token": {fx.csrf()}, "nsec": {nsec}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/import",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := noRedirectClient(t, fx.srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("import status = %d", resp.StatusCode)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/admin", fx.d.requireAuth(fx.d.handleAdmin))
+	mux.HandleFunc("/admin/check-in", fx.d.requireAuth(fx.d.handleAdminCheckIn))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestAdminCheckInButtonRendersInHub(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	req, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	s := string(body)
+	if !strings.Contains(s, `action="/admin/check-in"`) {
+		t.Fatalf("hub missing check-in form; body=%s", s)
+	}
+	if !strings.Contains(s, "Check in now") {
+		t.Fatalf("hub missing check-in label")
+	}
+}
+
+func TestAdminCheckInAdvancesLastSeen(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	// Age the state so the check-in has something observable to move.
+	w := fx.reg.Get(fx.userNpub)
+	if w == nil {
+		t.Fatal("registry.Get returned nil after enroll")
+	}
+	w.state.mu.Lock()
+	w.state.LastSeen = time.Now().Add(-48 * time.Hour)
+	w.state.WarningSent = 1
+	w.state.mu.Unlock()
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/check-in",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := noRedirectClient(t, srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin" {
+		t.Fatalf("Location = %q, want /admin", loc)
+	}
+
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if time.Since(w.state.LastSeen) > time.Minute {
+		t.Fatalf("LastSeen not advanced: %v", w.state.LastSeen)
+	}
+	if w.state.WarningSent != 0 {
+		t.Fatalf("WarningSent = %d, want 0", w.state.WarningSent)
+	}
+}
+
+func TestAdminCheckInRejectsBadCSRF(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	form := url.Values{"csrf_token": {"not-a-real-token"}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/check-in",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAdminCheckInRefusedWhenTriggered(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	w := fx.reg.Get(fx.userNpub)
+	if w == nil {
+		t.Fatal("registry.Get returned nil after enroll")
+	}
+	triggeredAt := time.Now().Add(-1 * time.Hour)
+	w.state.mu.Lock()
+	w.state.Triggered = true
+	w.state.TriggeredAt = &triggeredAt
+	w.state.mu.Unlock()
+
+	// Button should be suppressed from the hub template.
+	getReq, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	getReq.AddCookie(fx.sessionCookie())
+	getResp, err := srv.Client().Do(getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(getResp.Body)
+	getResp.Body.Close()
+	if strings.Contains(string(body), `action="/admin/check-in"`) {
+		t.Fatalf("triggered hub still renders check-in form; body=%s", string(body))
+	}
+
+	// And the endpoint itself must refuse even if someone POSTs directly.
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/check-in",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
 func TestWatcherSetupLegacyMode(t *testing.T) {
 	// Construct a legacy-mode DeadManSwitch and assert /admin/watcher 503s.
 	sk := nostr.GeneratePrivateKey()

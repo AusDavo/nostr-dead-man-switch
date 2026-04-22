@@ -526,6 +526,37 @@ func (w *UserWatcher) effectiveRelaysFor(uc *UserConfig) []string {
 	return nil
 }
 
+// ManualCheckIn records a manual liveness signal from the subject. It
+// advances LastSeen to now (if later than the current LastSeen), clears
+// any pending warnings, and persists the state. Refused once the watcher
+// has triggered — re-arming a triggered switch is an operator action,
+// not a subject one.
+func (w *UserWatcher) ManualCheckIn() error {
+	w.mu.RLock()
+	npub := w.userCfg.SubjectNpub
+	w.mu.RUnlock()
+
+	now := w.now()
+	id := fmt.Sprintf("manual:%d", now.Unix())
+
+	w.state.mu.Lock()
+	if w.state.Triggered {
+		w.state.mu.Unlock()
+		return errors.New("watcher already triggered; contact operator to re-arm")
+	}
+	if now.After(w.state.LastSeen) {
+		w.state.LastSeen = now
+		w.state.LastEventID = id
+	}
+	w.state.WarningSent = 0
+	w.state.mu.Unlock()
+
+	if err := w.store.SaveUserState(npub, w.state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return nil
+}
+
 // WatcherPrivHex returns the in-memory bot private key. Exposed so the
 // /admin/config/test-action handler can fire a nostr_note on the user's
 // behalf; never log this value.

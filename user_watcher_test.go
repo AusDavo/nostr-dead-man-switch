@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -520,6 +521,74 @@ func TestPublishConfigDMMonotonic(t *testing.T) {
 	}
 	if int64(ev.CreatedAt) != want.Unix() {
 		t.Fatalf("ev.CreatedAt = %d, want %d", ev.CreatedAt, want.Unix())
+	}
+}
+
+func TestUserWatcherManualCheckInAdvancesLastSeen(t *testing.T) {
+	fx := newWatcherFixture(t)
+	fx.w.state.mu.Lock()
+	fx.w.state.LastSeen = fx.nowFn().Add(-25 * time.Hour)
+	fx.w.state.WarningSent = 2
+	fx.w.state.LastEventID = "prev-event"
+	fx.w.state.mu.Unlock()
+
+	if err := fx.w.ManualCheckIn(); err != nil {
+		t.Fatalf("ManualCheckIn: %v", err)
+	}
+
+	wantID := fmt.Sprintf("manual:%d", fx.nowFn().Unix())
+	fx.w.state.mu.Lock()
+	defer fx.w.state.mu.Unlock()
+	if !fx.w.state.LastSeen.Equal(fx.nowFn()) {
+		t.Fatalf("LastSeen = %v, want %v", fx.w.state.LastSeen, fx.nowFn())
+	}
+	if fx.w.state.WarningSent != 0 {
+		t.Fatalf("WarningSent = %d, want 0", fx.w.state.WarningSent)
+	}
+	if fx.w.state.LastEventID != wantID {
+		t.Fatalf("LastEventID = %q, want %q", fx.w.state.LastEventID, wantID)
+	}
+}
+
+func TestUserWatcherManualCheckInPersists(t *testing.T) {
+	fx := newWatcherFixture(t)
+	fx.w.state.mu.Lock()
+	fx.w.state.LastSeen = fx.nowFn().Add(-25 * time.Hour)
+	fx.w.state.mu.Unlock()
+
+	if err := fx.w.ManualCheckIn(); err != nil {
+		t.Fatalf("ManualCheckIn: %v", err)
+	}
+	loaded, err := fx.store.LoadUserState(fx.npub)
+	if err != nil {
+		t.Fatalf("LoadUserState: %v", err)
+	}
+	if !loaded.LastSeen.Equal(fx.nowFn()) {
+		t.Fatalf("persisted LastSeen = %v, want %v", loaded.LastSeen, fx.nowFn())
+	}
+}
+
+func TestUserWatcherManualCheckInRefusedWhenTriggered(t *testing.T) {
+	fx := newWatcherFixture(t)
+	fx.w.state.mu.Lock()
+	triggeredAt := fx.nowFn().Add(-1 * time.Hour)
+	fx.w.state.LastSeen = fx.nowFn().Add(-40 * 24 * time.Hour)
+	fx.w.state.Triggered = true
+	fx.w.state.TriggeredAt = &triggeredAt
+	fx.w.state.WarningSent = 2
+	fx.w.state.mu.Unlock()
+
+	err := fx.w.ManualCheckIn()
+	if err == nil {
+		t.Fatal("ManualCheckIn should refuse when triggered")
+	}
+	fx.w.state.mu.Lock()
+	defer fx.w.state.mu.Unlock()
+	if fx.w.state.WarningSent != 2 {
+		t.Fatalf("WarningSent = %d, want unchanged (2)", fx.w.state.WarningSent)
+	}
+	if fx.w.state.LastSeen.After(fx.nowFn().Add(-40 * 24 * time.Hour).Add(time.Second)) {
+		t.Fatalf("LastSeen advanced past seed despite triggered state")
 	}
 }
 
