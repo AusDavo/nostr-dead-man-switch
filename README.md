@@ -59,6 +59,7 @@ git clone https://github.com/AusDavo/nostr-dead-man-switch.git
 cd nostr-dead-man-switch
 
 # Copy example .env file
+cp .env.example .env
 
 # Generate a bot keypair
 docker compose run --rm deadman --generate-key
