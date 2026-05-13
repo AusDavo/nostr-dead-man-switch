@@ -6,7 +6,7 @@ If you go silent for X days, it sends you a private DM as a last-resort check-in
 
 ## Status
 
-Pre-1.0, no tagged releases yet. Config schema, CLI flags, and state file format may change between commits. If you run this, pin to a specific commit, keep backups of your `config.yaml` and state files, and re-read this README before pulling updates. Tagged releases and published container images are planned before the project is submitted to Umbrel / Start9 app stores.
+Pre-1.0, but releases are now tagged. `v0.1.0` is the first published image — pre-built multi-arch (`linux/amd64`, `linux/arm64`) containers are available at [`ghcr.io/ausdavo/nostr-dead-man-switch`](https://github.com/AusDavo/nostr-dead-man-switch/pkgs/container/nostr-dead-man-switch). On-disk `state.json` and `config.json` carry a `schema_version` field so future shape changes have a migration path. Config schema, CLI flags, and field shapes may still change before 1.0 — keep backups and read the [CHANGELOG](CHANGELOG.md) before bumping versions.
 
 ## Why this over existing tools
 
@@ -53,8 +53,10 @@ Monitor npub across relays
 
 ### Docker (recommended)
 
+The repo's `docker-compose.yml` pulls a tagged multi-arch image from GHCR. No Go toolchain needed on the host.
+
 ```bash
-# Clone
+# Clone (for the compose file, configs, and CLI helpers below)
 git clone https://github.com/AusDavo/nostr-dead-man-switch.git
 cd nostr-dead-man-switch
 
@@ -69,17 +71,21 @@ cp .env.example .env
 cp config.example.yaml config.yaml
 # Edit config.yaml with your npub, relays, timing, and actions
 
-# Run
+# Pull the image and run
+docker compose pull
 docker compose up -d
 
 # Status page at http://localhost:8080
 ```
+
+To upgrade later: edit the image tag in `docker-compose.yml`, then `git pull && docker compose pull && docker compose up -d`. Watch the [CHANGELOG](CHANGELOG.md) for breaking notes.
 
 ### Build from source
 
 ```bash
 go build -o nostr-deadman .
 ./nostr-deadman -config config.yaml
+./nostr-deadman --version  # prints the embedded tag (or "dev" for local builds)
 ```
 
 ## Configuration
@@ -267,8 +273,10 @@ Run `./nostr-deadman --reset-session` to rotate the session secret and invalidat
 A `/health` JSON endpoint is also available for monitoring:
 
 ```json
-{"status":"healthy","last_seen":"2026-04-11T12:00:00Z","silence_seconds":3600,"warnings_sent":0,"triggered":false}
+{"version":"v0.1.0","status":"healthy","last_seen":"2026-04-11T12:00:00Z","silence_seconds":3600,"warnings_sent":0,"triggered":false}
 ```
+
+In federation mode `/health` reports aggregate state instead: `{"version":"v0.1.0","mode":"federation","watchers":3}`.
 
 ## State and re-arming
 
@@ -297,7 +305,9 @@ In federation mode, enrolled users generate or import their watcher nsec from `/
 
 - [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — shipped. Authenticated `/admin/config` form lets each user edit their own `UserConfig` and persists updates via self-DM propagation.
 - [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — shipped as federation v1. One deployment supervises a whitelist of enrolled npubs, each with their own bot key, actions, and timing. See the section below.
-- [**v0.1.0 release gate**](https://github.com/AusDavo/nostr-dead-man-switch/milestone/1) — CI, multi-arch GHCR image, versioned binary, CHANGELOG, schema versioning, and UI re-arm. Prerequisites for Umbrel / Start9 app store submission.
+- [x] ~~**v0.1.0 release gate**~~ — CI, multi-arch GHCR image, versioned binary, CHANGELOG, and schema versioning all shipped on 2026-05-13. See [CHANGELOG.md](CHANGELOG.md).
+- [Re-arm from the admin UI](https://github.com/AusDavo/nostr-dead-man-switch/issues/14) — currently a state-file delete + restart; bring it inside the dashboard.
+- [Whitelist gating v1](https://github.com/AusDavo/nostr-dead-man-switch/issues/15) — closed whitelist + invite codes + admin UI for hosts running federated deployments for friends/family.
 - Cross-peer fire coordination (federation v2) — staggered fire slots + receipts so multiple active peers don't double-send actions. v1 limitations described below.
 
 ## Federation v1
