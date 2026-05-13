@@ -261,6 +261,7 @@ func federationTestServer(t *testing.T, enrolled, whitelistedOnly []string) (*ht
 	mux.HandleFunc("/login", d.handleLogin)
 	mux.HandleFunc("/login/challenge", d.handleLoginChallenge)
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
+	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
 	return httptest.NewServer(mux), d
 }
 
@@ -323,7 +324,12 @@ func TestLoginVerify_FederationNonWhitelistedFails(t *testing.T) {
 	}
 }
 
-func TestLoginVerify_FederationEnrolledButNotRunningFails(t *testing.T) {
+// A whitelisted user who has not yet bootstrapped a watcher must be
+// able to sign in — that is the only way they can reach /admin/watcher
+// and complete enrollment from the browser. Enrollment state is
+// enforced downstream by handleAdminFederation, which redirects
+// unenrolled sessions to /admin/watcher.
+func TestLoginVerify_FederationWhitelistedUnenrolledSucceeds(t *testing.T) {
 	sk := nostr.GeneratePrivateKey()
 	pk, _ := nostr.GetPublicKey(sk)
 	npub, _ := nip19.EncodePublicKey(pk)
@@ -333,9 +339,61 @@ func TestLoginVerify_FederationEnrolledButNotRunningFails(t *testing.T) {
 
 	resp := getChallengeAndVerify(t, srv, sk)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d body=%s, want 401", resp.StatusCode, b)
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, b)
+	}
+}
+
+// End-to-end: a whitelisted but unenrolled user must be able to log in
+// and then get bounced from /admin to /admin/watcher, where the
+// bootstrap forms live. This is the on-ramp for new federation users
+// and the only way to recover from a watcher that failed to start at
+// boot.
+func TestLoginFlow_FederationWhitelistedUnenrolledRedirectsToBootstrap(t *testing.T) {
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+	npub, _ := nip19.EncodePublicKey(pk)
+
+	srv, _ := federationTestServer(t, nil, []string{npub})
+	defer srv.Close()
+
+	resp := getChallengeAndVerify(t, srv, sk)
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("verify status = %d body=%s, want 200", resp.StatusCode, b)
+	}
+	var cookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == sessionCookieName {
+			cookie = c
+			break
+		}
+	}
+	resp.Body.Close()
+	if cookie == nil {
+		t.Fatal("no session cookie set on successful verify")
+	}
+
+	noFollow := &http.Client{
+		Transport: srv.Client().Transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.AddCookie(cookie)
+	adminResp, err := noFollow.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminResp.Body.Close()
+	if adminResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("/admin status = %d, want 303", adminResp.StatusCode)
+	}
+	if loc := adminResp.Header.Get("Location"); loc != "/admin/watcher" {
+		t.Fatalf("/admin redirect to %q, want /admin/watcher", loc)
 	}
 }
 

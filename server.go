@@ -185,9 +185,13 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 }
 
 // isAuthorizedLogin reports whether the given hex pubkey can establish a
-// dashboard session. In federation mode it delegates to the registry: the
-// npub must be whitelisted and have a running watcher. In legacy mode it
-// matches the single configured watch_pubkey.
+// dashboard session. In federation mode the npub must be whitelisted;
+// enrollment state is checked downstream by handleAdminFederation and
+// the other authed handlers, which redirect unenrolled users to
+// /admin/watcher to bootstrap. Conflating "is allowed" with "is
+// running" here would lock out new whitelisted users (who haven't
+// bootstrapped yet) and users whose watcher failed to start at boot.
+// In legacy mode it matches the single configured watch_pubkey.
 func (d *DeadManSwitch) isAuthorizedLogin(pubHex string) bool {
 	if pubHex == "" {
 		return false
@@ -200,7 +204,7 @@ func (d *DeadManSwitch) isAuthorizedLogin(pubHex string) bool {
 		if err != nil {
 			return false
 		}
-		return d.registry.IsWhitelisted(npub) && d.registry.IsRunning(npub)
+		return d.registry.IsWhitelisted(npub)
 	}
 	return pubHex == d.cfg.watchPubkeyHex
 }
