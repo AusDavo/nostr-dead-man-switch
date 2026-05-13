@@ -22,7 +22,13 @@ func main() {
 	whitelistNote := flag.String("whitelist-note", "", "note to attach with --whitelist-add")
 	whitelistRemove := flag.String("whitelist-remove", "", "remove npub from whitelist and exit")
 	whitelistList := flag.Bool("whitelist-list", false, "list whitelist entries and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	if *genKey {
 		generateKey()
@@ -48,6 +54,8 @@ func main() {
 	} else if handled {
 		return
 	}
+
+	log.Printf("nostr-deadman %s starting", version)
 
 	state, err := LoadState(cfg.StateFile)
 	if err != nil {

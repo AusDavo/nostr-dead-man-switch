@@ -234,6 +234,7 @@ func (d *DeadManSwitch) handleAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 type healthResponse struct {
+	Version        string   `json:"version"`
 	Status         string   `json:"status"`
 	LastSeen       string   `json:"last_seen"`
 	SilenceSeconds float64  `json:"silence_seconds"`
@@ -250,6 +251,7 @@ func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
 			snaps = d.registry.Snapshots()
 		}
 		out := map[string]any{
+			"version":  version,
 			"mode":     "federation",
 			"watchers": len(snaps),
 		}
@@ -259,6 +261,7 @@ func (d *DeadManSwitch) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	d.state.mu.Lock()
 	resp := healthResponse{
+		Version:        version,
 		Status:         d.currentStatus(),
 		LastSeen:       d.state.LastSeen.UTC().Format(time.RFC3339),
 		SilenceSeconds: time.Since(d.state.LastSeen).Seconds(),

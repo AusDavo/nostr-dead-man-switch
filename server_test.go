@@ -140,6 +140,42 @@ func TestFederationModeBootsHTTPServer(t *testing.T) {
 	if health["mode"] != "federation" {
 		t.Fatalf("health mode = %v, want federation", health["mode"])
 	}
+	if health["version"] != version {
+		t.Fatalf("health version = %v, want %q", health["version"], version)
+	}
+}
+
+func TestHealthLegacyModeIncludesVersion(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{StateFile: filepath.Join(dir, "state.json")}
+	sm, err := newSessionManager(filepath.Join(dir, "session_secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &DeadManSwitch{
+		cfg:       cfg,
+		sessions:  sm,
+		state:     NewState(),
+		startedAt: time.Now(),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", d.handleHealth)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var health map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if health["version"] != version {
+		t.Fatalf("health version = %v, want %q", health["version"], version)
+	}
 }
 
 // insertRunningWatcher inserts a *UserWatcher into the registry's
