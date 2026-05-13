@@ -359,3 +359,142 @@ func TestUserStoreRejectsInvalidNpub(t *testing.T) {
 		})
 	}
 }
+
+func TestUserStoreLoadConfigMigratesLegacyToV1(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	legacy := []byte(`{
+  "subject_npub": "` + npub + `",
+  "silence_threshold": "1h0m0s",
+  "warning_interval": "30m0s",
+  "warning_count": 1,
+  "check_interval": "5m0s",
+  "actions": [],
+  "updated_at": "2026-05-01T00:00:00Z"
+}`)
+	if err := u.SaveConfigBytes(npub, legacy); err != nil {
+		t.Fatalf("SaveConfigBytes: %v", err)
+	}
+
+	c, err := u.LoadConfig(npub)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if c.SchemaVersion != userCfgSchemaCurrent {
+		t.Fatalf("SchemaVersion = %d, want %d", c.SchemaVersion, userCfgSchemaCurrent)
+	}
+	if c.SubjectNpub != npub {
+		t.Fatalf("SubjectNpub = %q, want %q", c.SubjectNpub, npub)
+	}
+
+	raw, err := u.LoadConfigBytes(npub)
+	if err != nil {
+		t.Fatalf("LoadConfigBytes: %v", err)
+	}
+	if !strings.Contains(string(raw), `"schema_version": 1`) {
+		t.Fatalf("on-disk config.json not stamped:\n%s", raw)
+	}
+}
+
+func TestUserStoreLoadConfigForwardVersionRefused(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := u.SaveConfigBytes(npub, []byte(`{"schema_version": 99, "subject_npub":"`+npub+`"}`)); err != nil {
+		t.Fatalf("SaveConfigBytes: %v", err)
+	}
+	_, err := u.LoadConfig(npub)
+	if err == nil {
+		t.Fatal("expected error for forward-version config.json")
+	}
+	if !strings.Contains(err.Error(), "newer than this binary supports") {
+		t.Fatalf("error %q lacks expected substring", err.Error())
+	}
+}
+
+func TestUserStoreSaveConfigStampsSchemaVersion(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	c := &UserConfig{
+		SubjectNpub:      npub,
+		SilenceThreshold: Duration{Duration: time.Hour},
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if err := u.SaveConfig(npub, c); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if c.SchemaVersion != userCfgSchemaCurrent {
+		t.Fatalf("SchemaVersion not stamped in-memory: %d", c.SchemaVersion)
+	}
+	raw, err := u.LoadConfigBytes(npub)
+	if err != nil {
+		t.Fatalf("LoadConfigBytes: %v", err)
+	}
+	if !strings.Contains(string(raw), `"schema_version": 1`) {
+		t.Fatalf("on-disk config.json not stamped:\n%s", raw)
+	}
+}
+
+func TestUserStoreLoadUserStateMigratesLegacyToV1(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	legacy := []byte(`{
+  "last_seen": "2026-05-01T00:00:00Z",
+  "last_event_id": "ev1",
+  "warnings_sent": 0,
+  "triggered": false
+}`)
+	statePath := filepath.Join(u.UserDir(npub), "state.json")
+	if err := os.WriteFile(statePath, legacy, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	s, err := u.LoadUserState(npub)
+	if err != nil {
+		t.Fatalf("LoadUserState: %v", err)
+	}
+	if s.SchemaVersion != stateSchemaCurrent {
+		t.Fatalf("SchemaVersion = %d, want %d", s.SchemaVersion, stateSchemaCurrent)
+	}
+	if s.LastEventID != "ev1" {
+		t.Fatalf("LastEventID = %q, want ev1", s.LastEventID)
+	}
+
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(raw), `"schema_version": 1`) {
+		t.Fatalf("on-disk state.json not stamped:\n%s", raw)
+	}
+}
+
+func TestUserStoreLoadUserStateForwardVersionRefused(t *testing.T) {
+	u, _ := NewUserStore(t.TempDir())
+	npub := testNpub(t)
+	if err := u.CreateUser(npub); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	statePath := filepath.Join(u.UserDir(npub), "state.json")
+	if err := os.WriteFile(statePath, []byte(`{"schema_version": 99}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := u.LoadUserState(npub)
+	if err == nil {
+		t.Fatal("expected error for forward-version state.json")
+	}
+	if !strings.Contains(err.Error(), "newer than this binary supports") {
+		t.Fatalf("error %q lacks expected substring", err.Error())
+	}
+}

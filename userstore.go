@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,9 +120,21 @@ func (u *UserStore) LoadConfig(npub string) (*UserConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	migrated, didMigrate, err := migrateUserConfig(data)
+	if err != nil {
+		return nil, fmt.Errorf("userstore: migrating config.json for %s: %w", npub, err)
+	}
 	var c UserConfig
-	if err := json.Unmarshal(data, &c); err != nil {
+	if err := json.Unmarshal(migrated, &c); err != nil {
 		return nil, fmt.Errorf("userstore: decoding config.json: %w", err)
+	}
+	c.SchemaVersion = userCfgSchemaCurrent
+	if didMigrate {
+		path := filepath.Join(u.UserDir(npub), "config.json")
+		log.Printf("[schema] migrated config.json at %s to v%d", path, userCfgSchemaCurrent)
+		if err := atomicWrite(path, migrated, 0o600); err != nil {
+			log.Printf("[schema] failed to rewrite migrated config.json at %s: %v (in-memory config is correct)", path, err)
+		}
 	}
 	return &c, nil
 }
@@ -129,6 +142,7 @@ func (u *UserStore) LoadConfig(npub string) (*UserConfig, error) {
 // SaveConfig encodes the UserConfig and atomically writes it to
 // config.json with mode 0600. Validation is the caller's responsibility.
 func (u *UserStore) SaveConfig(npub string, c *UserConfig) error {
+	c.SchemaVersion = userCfgSchemaCurrent
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("userstore: encoding config.json: %w", err)
@@ -143,16 +157,28 @@ func (u *UserStore) LoadUserState(npub string) (*State, error) {
 	if err := validateNpub(npub); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(u.UserDir(npub), "state.json"))
+	path := filepath.Join(u.UserDir(npub), "state.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return NewState(), nil
 		}
 		return nil, fmt.Errorf("userstore: reading state.json: %w", err)
 	}
+	migrated, didMigrate, err := migrateState(data)
+	if err != nil {
+		return nil, fmt.Errorf("userstore: migrating state.json for %s: %w", npub, err)
+	}
 	var s State
-	if err := json.Unmarshal(data, &s); err != nil {
+	if err := json.Unmarshal(migrated, &s); err != nil {
 		return nil, fmt.Errorf("userstore: decoding state.json: %w", err)
+	}
+	s.SchemaVersion = stateSchemaCurrent
+	if didMigrate {
+		log.Printf("[schema] migrated state.json at %s to v%d", path, stateSchemaCurrent)
+		if err := atomicWrite(path, migrated, 0o600); err != nil {
+			log.Printf("[schema] failed to rewrite migrated state.json at %s: %v (in-memory state is correct)", path, err)
+		}
 	}
 	return &s, nil
 }
@@ -163,6 +189,7 @@ func (u *UserStore) SaveUserState(npub string, s *State) error {
 		return err
 	}
 	s.mu.Lock()
+	s.SchemaVersion = stateSchemaCurrent
 	data, err := json.MarshalIndent(s, "", "  ")
 	s.mu.Unlock()
 	if err != nil {

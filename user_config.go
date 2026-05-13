@@ -10,6 +10,7 @@ import (
 // lives at <StateDir>/users/<npub>/config.json and is owned entirely by
 // that tenant.
 type UserConfig struct {
+	SchemaVersion    int       `json:"schema_version"`
 	SubjectNpub      string    `json:"subject_npub"`
 	WatcherPubkeyHex string    `json:"watcher_pubkey_hex,omitempty"`
 	Relays           []string  `json:"relays,omitempty"`
