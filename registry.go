@@ -44,6 +44,14 @@ type Registry struct {
 	mu       sync.RWMutex
 	parent   context.Context
 	watchers map[string]*supervised
+
+	// lastStartErr records the most recent non-recoverable Start failure
+	// per npub (sealer key wrong, config.json malformed, factory error
+	// during boot). Surfaced by /admin/watcher so an enrolled user can
+	// see why their watcher isn't running and retry from the browser.
+	// Cleared on a successful start, on Stop, and on ErrNotEnrolled
+	// (which is a normal pre-bootstrap state, not a failure).
+	lastStartErr map[string]string
 }
 
 // NewRegistry constructs a Registry bound to the given context. parent
@@ -51,12 +59,13 @@ type Registry struct {
 func NewRegistry(host *HostConfig, store *UserStore, wl *Whitelist,
 	sealer *Sealer, parent context.Context) *Registry {
 	r := &Registry{
-		host:     host,
-		store:    store,
-		wl:       wl,
-		sealer:   sealer,
-		parent:   parent,
-		watchers: map[string]*supervised{},
+		host:         host,
+		store:        store,
+		wl:           wl,
+		sealer:       sealer,
+		parent:       parent,
+		watchers:     map[string]*supervised{},
+		lastStartErr: map[string]string{},
 	}
 	r.newWatcher = r.defaultNewWatcher
 	return r
@@ -153,10 +162,12 @@ func (r *Registry) Stop(npub string) error {
 	r.mu.Lock()
 	s, ok := r.watchers[npub]
 	if !ok {
+		delete(r.lastStartErr, npub)
 		r.mu.Unlock()
 		return nil
 	}
 	delete(r.watchers, npub)
+	delete(r.lastStartErr, npub)
 	r.mu.Unlock()
 
 	s.cancel()
@@ -231,10 +242,7 @@ func (r *Registry) ReloadWhitelist() error {
 		if running[npub] {
 			continue
 		}
-		if err := r.Start(npub); err != nil {
-			if errors.Is(err, ErrNotEnrolled) {
-				continue // waiting on #7 enrollment
-			}
+		if err := r.tryStart(npub); err != nil && !errors.Is(err, ErrNotEnrolled) {
 			log.Printf("[whitelist] start %s: %v", npub, err)
 		}
 	}
@@ -316,6 +324,39 @@ func (r *Registry) IsRunning(npub string) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.watchers[npub]
 	return ok
+}
+
+// tryStart calls Start and records the outcome in lastStartErr. Success
+// (or ErrNotEnrolled, which is a pre-bootstrap state, not a failure)
+// clears any prior error. All other errors are stashed under npub for
+// LastStartError to surface in the UI.
+func (r *Registry) tryStart(npub string) error {
+	err := r.Start(npub)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil || errors.Is(err, ErrNotEnrolled) {
+		delete(r.lastStartErr, npub)
+	} else {
+		r.lastStartErr[npub] = err.Error()
+	}
+	return err
+}
+
+// RetryStart attempts to (re)start a watcher whose previous Start
+// failed — used by /admin/watcher/retry-start when a user surfaces a
+// boot-time start failure from the browser. Idempotent: a no-op when
+// the watcher is already running.
+func (r *Registry) RetryStart(npub string) error {
+	return r.tryStart(npub)
+}
+
+// LastStartError returns the most recent non-recoverable Start failure
+// for npub, or the empty string if the watcher started cleanly or has
+// never been attempted. Empty for ErrNotEnrolled (pre-bootstrap).
+func (r *Registry) LastStartError(npub string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastStartErr[npub]
 }
 
 // Snapshots returns a snapshot of every running watcher, in no particular

@@ -88,6 +88,7 @@ func newWatcherSetupFixture(t *testing.T) *watcherSetupFixture {
 	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
 	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
 	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
+	mux.HandleFunc("/admin/watcher/retry-start", d.requireAuth(d.handleWatcherRetryStart))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -176,6 +177,141 @@ func TestWatcherSetupAlreadyConfigured(t *testing.T) {
 	}
 	if strings.Contains(string(body), `action="/admin/watcher/generate"`) {
 		t.Fatalf("should not offer generate form when already set up")
+	}
+}
+
+// Enrolled-but-not-running: the bootstrap page must surface the
+// stashed Start error and a Retry button, while still offering the
+// existing reveal-nsec affordance so the user can back up their key
+// before doing anything drastic.
+func TestWatcherSetupRendersStartErrorState(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	if err := fx.store.CreateUser(fx.userNpub); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.SaveSealedNsec(fx.userNpub, "sentinel"); err != nil {
+		t.Fatal(err)
+	}
+	fx.reg.mu.Lock()
+	fx.reg.lastStartErr[fx.userNpub] = "simulated boot-time start failure"
+	fx.reg.mu.Unlock()
+
+	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/watcher", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := string(body)
+
+	if !strings.Contains(s, "Watcher is not running") {
+		t.Fatalf("missing recovery banner; body=%s", s)
+	}
+	if !strings.Contains(s, "simulated boot-time start failure") {
+		t.Fatal("error string not rendered")
+	}
+	if !strings.Contains(s, `action="/admin/watcher/retry-start"`) {
+		t.Fatal("missing retry-start form")
+	}
+	if !strings.Contains(s, "Reveal nsec") {
+		t.Fatal("reveal-nsec affordance must remain available in the recovery state")
+	}
+}
+
+func TestWatcherRetryStartNoSealedNsecRedirectsToWatcher(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/retry-start",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin/watcher" {
+		t.Fatalf("Location = %q, want /admin/watcher", loc)
+	}
+}
+
+func TestWatcherRetryStartRecoversOnSuccess(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	// First enroll the user end-to-end via the existing generate flow so
+	// the sealed nsec and config.json are real and decryptable.
+	genForm := url.Values{"csrf_token": {fx.csrf()}}
+	genReq, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/generate",
+		strings.NewReader(genForm.Encode()))
+	genReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	genReq.AddCookie(fx.sessionCookie())
+	genResp, err := fx.srv.Client().Do(genReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genResp.Body.Close()
+	if !fx.reg.IsRunning(fx.userNpub) {
+		t.Fatal("precondition: watcher should be running after generate")
+	}
+
+	// Now simulate a boot-time failure: stop the watcher and stash an
+	// error as if ReloadWhitelist had tried and failed.
+	if err := fx.reg.Stop(fx.userNpub); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	fx.reg.mu.Lock()
+	fx.reg.lastStartErr[fx.userNpub] = "simulated boot failure"
+	fx.reg.mu.Unlock()
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/retry-start",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	client := noRedirectClient(t, fx.srv.Client())
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin" {
+		t.Fatalf("Location = %q, want /admin", loc)
+	}
+	if !fx.reg.IsRunning(fx.userNpub) {
+		t.Fatal("watcher should be running after successful retry")
+	}
+	if got := fx.reg.LastStartError(fx.userNpub); got != "" {
+		t.Fatalf("LastStartError = %q, want empty after recovery", got)
+	}
+}
+
+func TestWatcherRetryStartCSRFRequired(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+
+	req, _ := http.NewRequest("POST", fx.srv.URL+"/admin/watcher/retry-start",
+		strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := fx.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 }
 

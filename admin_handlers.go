@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -45,6 +46,10 @@ type watcherSetupData struct {
 	CSRF         string
 	AlreadySetup bool
 	WatcherNpub  string // bot pubkey in npub form, always populated when AlreadySetup
+	// StartError carries the last Registry.Start failure for this npub.
+	// Populated only when AlreadySetup is true but the watcher is not
+	// running — the recovery state the third-branch UI renders.
+	StartError string
 }
 
 type watcherGeneratedData struct {
@@ -89,6 +94,13 @@ func (d *DeadManSwitch) handleWatcherSetup(w http.ResponseWriter, r *http.Reques
 		if uc, err := store.LoadConfig(npub); err == nil && uc != nil {
 			if botNpub, err := nip19.EncodePublicKey(uc.WatcherPubkeyHex); err == nil {
 				data.WatcherNpub = botNpub
+			}
+		}
+		if !d.registry.IsRunning(npub) {
+			if msg := d.registry.LastStartError(npub); msg != "" {
+				data.StartError = msg
+			} else {
+				data.StartError = "watcher is not running and no start has been attempted yet"
 			}
 		}
 	}
@@ -316,6 +328,29 @@ func (d *DeadManSwitch) handleWatcherImport(w http.ResponseWriter, r *http.Reque
 
 	if err := d.enrollWatcher(npub, skHex, pkHex); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+// handleWatcherRetryStart re-attempts Registry.Start for the session's
+// npub. Used to recover from a boot-time start failure (rotated sealer
+// key, malformed config.json, transient relay error) without SSH access
+// to the host. On success the user lands on /admin; on continued
+// failure they bounce back to /admin/watcher, where the freshly-stashed
+// error renders inline.
+func (d *DeadManSwitch) handleWatcherRetryStart(w http.ResponseWriter, r *http.Request) {
+	_, npub, ok := d.requireFederationPost(w, r)
+	if !ok {
+		return
+	}
+	if !d.registry.Store().HasSealedNsec(npub) {
+		http.Redirect(w, r, "/admin/watcher", http.StatusSeeOther)
+		return
+	}
+	if err := d.registry.RetryStart(npub); err != nil {
+		log.Printf("[watcher] retry-start %s: %v", npub, err)
+		http.Redirect(w, r, "/admin/watcher", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
@@ -726,6 +761,22 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
     <span class="npub">{{.Npub}}</span>
   </h1>
   {{if .AlreadySetup}}
+  {{if .StartError}}
+  <div class="alert-danger">
+    <strong>Watcher is not running.</strong> The daemon could not start your watcher on this boot. Your sealed key is still on disk and intact — you can retry below, or export the nsec for safekeeping.
+    <div style="margin-top:0.5rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all;">{{.StartError}}</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Retry start</div>
+    <div class="muted">
+      Re-runs the watcher's start sequence: load config, unseal nsec, connect relays. If the underlying problem (wrong store key, malformed config) hasn't been fixed, you'll see the same error again.
+    </div>
+    <form method="POST" action="/admin/watcher/retry-start">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="primary">Retry start</button>
+    </form>
+  </div>
+  {{end}}
   <div class="card">
     <div class="card-title">Watcher pubkey (safe to share)</div>
     <div class="muted">

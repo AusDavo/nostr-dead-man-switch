@@ -214,6 +214,116 @@ func TestRegistryStartRejectsNonEnrolled(t *testing.T) {
 	}
 }
 
+// A factory that fails on the configured npub once, then succeeds on
+// subsequent calls. Lets tests exercise the "boot-time start failed,
+// retry now works" flow that #19 introduces.
+type flakyFactory struct {
+	inner   func(npub string) (supervisedWatcher, *UserWatcher, *UserConfig, error)
+	failFor map[string]int // npub → remaining failures
+	mu      sync.Mutex
+}
+
+func (ff *flakyFactory) make(npub string) (supervisedWatcher, *UserWatcher, *UserConfig, error) {
+	ff.mu.Lock()
+	if ff.failFor[npub] > 0 {
+		ff.failFor[npub]--
+		ff.mu.Unlock()
+		return nil, nil, nil, fmt.Errorf("simulated start failure for %s", npub)
+	}
+	ff.mu.Unlock()
+	return ff.inner(npub)
+}
+
+func TestRegistryTryStartRecordsAndClearsError(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0x11)
+	fx.enroll(t, npub)
+
+	flaky := &flakyFactory{inner: fx.ff.make, failFor: map[string]int{npub: 1}}
+	fx.r.newWatcher = flaky.make
+
+	if err := fx.r.tryStart(npub); err == nil {
+		t.Fatal("expected first tryStart to fail")
+	}
+	if got := fx.r.LastStartError(npub); got == "" {
+		t.Fatal("LastStartError should be set after a failed start")
+	}
+
+	if err := fx.r.tryStart(npub); err != nil {
+		t.Fatalf("second tryStart: %v", err)
+	}
+	if got := fx.r.LastStartError(npub); got != "" {
+		t.Fatalf("LastStartError = %q, want empty after success", got)
+	}
+	fx.r.Stop(npub)
+}
+
+func TestRegistryNotEnrolledDoesNotRecordError(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0x12)
+	if err := fx.wl.Add(npub, ""); err != nil {
+		t.Fatalf("whitelist.Add: %v", err)
+	}
+	if err := fx.r.tryStart(npub); !errors.Is(err, ErrNotEnrolled) {
+		t.Fatalf("tryStart = %v, want ErrNotEnrolled", err)
+	}
+	if got := fx.r.LastStartError(npub); got != "" {
+		t.Fatalf("LastStartError = %q, want empty for ErrNotEnrolled", got)
+	}
+}
+
+func TestRegistryStopClearsLastStartErr(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0x13)
+	fx.enroll(t, npub)
+
+	flaky := &flakyFactory{inner: fx.ff.make, failFor: map[string]int{npub: 99}}
+	fx.r.newWatcher = flaky.make
+
+	_ = fx.r.tryStart(npub)
+	if got := fx.r.LastStartError(npub); got == "" {
+		t.Fatal("precondition: error not recorded")
+	}
+	if err := fx.r.Stop(npub); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := fx.r.LastStartError(npub); got != "" {
+		t.Fatalf("LastStartError = %q, want empty after Stop", got)
+	}
+}
+
+func TestRegistryReloadWhitelistRecordsStartError(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0x14)
+	fx.enroll(t, npub)
+
+	flaky := &flakyFactory{inner: fx.ff.make, failFor: map[string]int{npub: 1}}
+	fx.r.newWatcher = flaky.make
+
+	if err := fx.r.ReloadWhitelist(); err != nil {
+		t.Fatalf("ReloadWhitelist: %v", err)
+	}
+	if fx.r.IsRunning(npub) {
+		t.Fatal("watcher should not be running after factory failure")
+	}
+	if got := fx.r.LastStartError(npub); got == "" {
+		t.Fatal("LastStartError empty after failed ReloadWhitelist start")
+	}
+
+	// Next ReloadWhitelist retries Start (the watcher isn't running),
+	// so the second call should clear the error and bring it up.
+	if err := fx.r.ReloadWhitelist(); err != nil {
+		t.Fatalf("second ReloadWhitelist: %v", err)
+	}
+	if !fx.r.IsRunning(npub) {
+		t.Fatal("watcher should be running after retry")
+	}
+	if got := fx.r.LastStartError(npub); got != "" {
+		t.Fatalf("LastStartError = %q, want empty after recovery", got)
+	}
+	fx.r.Stop(npub)
+}
+
 func TestRegistryReloadWhitelistDiff(t *testing.T) {
 	fx := newRegistryFixture(t)
 	a := npubFromSeed(t, 0x01)
