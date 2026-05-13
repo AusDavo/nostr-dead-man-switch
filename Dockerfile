@@ -9,6 +9,7 @@ COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=${VERSION}" -o /nostr-deadman .
 
 FROM alpine:3.20
+LABEL org.opencontainers.image.source=https://github.com/AusDavo/nostr-dead-man-switch
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /nostr-deadman /usr/local/bin/nostr-deadman
 VOLUME /data
