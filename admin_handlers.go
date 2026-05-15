@@ -820,7 +820,7 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
     <form method="POST" action="/admin/watcher/generate">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <label class="consent"><input type="checkbox" required> I understand this nsec will be shown once and cannot be recovered.</label>
-      <button type="submit" class="primary">Generate</button>
+      <button type="submit" class="primary">Generate bot key</button>
     </form>
   </div>
   <div class="card">
@@ -830,7 +830,7 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <textarea name="nsec" placeholder="nsec1..." required spellcheck="false"></textarea>
       <div style="margin-top:0.75rem">
-        <button type="submit" class="primary">Import</button>
+        <button type="submit" class="primary">Import nsec</button>
       </div>
     </form>
   </div>
@@ -1277,7 +1277,7 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
           <option value="nostr_event">Nostr event</option>
         </select>
         <div class="spacer"></div>
-        <button type="button" class="secondary action-test">Test</button>
+        <button type="button" class="secondary action-test">Test fire</button>
         <button type="button" class="danger action-remove">Remove</button>
       </div>
       <div class="action-msg msg"></div>
