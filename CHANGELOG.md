@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-05-15
+
+Patch release. One operator-facing feature plus a small polish pass.
+
+### Admin dashboard
+
+- Re-arm a triggered switch from `/admin` without shell access. The
+  Triggered card now has a CSRF-protected "Re-arm switch" button (with
+  a confirm prompt) that clears the triggered state, advances
+  `last_seen` to now, and restarts the watcher goroutine so monitoring
+  resumes. Self-hosted Umbrel / Start9 operators no longer need
+  filesystem access to recover from an accidental trigger.
+- Button labels on the watcher-setup and config editor pages now use
+  action-specific verbs (`Generate bot key`, `Import nsec`, `Test fire`)
+  instead of generic ones (`Generate`, `Import`, `Test`).
+
+### Docs
+
+- README quick-start reorders the bootstrap steps so `.env` exists
+  before the first `docker compose run` invocation (which needs it).
+  Thanks to @brendio for the report (#18).
+
+[0.1.1]: https://github.com/AusDavo/nostr-dead-man-switch/releases/tag/v0.1.1
+
 ## [0.1.0] — 2026-05-13
 
 First tagged release. Pre-1.0: the config schema, CLI flags, and
