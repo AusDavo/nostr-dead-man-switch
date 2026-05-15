@@ -60,11 +60,13 @@ The repo's `docker-compose.yml` pulls a tagged multi-arch image from GHCR. No Go
 git clone https://github.com/AusDavo/nostr-dead-man-switch.git
 cd nostr-dead-man-switch
 
+# Copy example .env file
+cp .env.example .env
+
 # Generate a bot keypair
 docker compose run --rm deadman --generate-key
 
 # Set up secrets
-cp .env.example .env
 # Edit .env with the bot nsec you just generated (and SMTP password if using email)
 
 # Set up config
