@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -577,6 +578,34 @@ func (d *DeadManSwitch) handleAdminCheckIn(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
+// handleAdminRearm clears a triggered watcher's state and restarts
+// its goroutine. Federation-only and CSRF-protected via
+// requireFederationPost. 409 when the watcher is not actually
+// triggered (clicking the button after another tab already re-armed,
+// or stale UI). 303 → /admin/watcher when there is no running watcher
+// for this session npub (operator hasn't enrolled yet — same fallback
+// as the check-in handler).
+func (d *DeadManSwitch) handleAdminRearm(w http.ResponseWriter, r *http.Request) {
+	_, npub, ok := d.requireFederationPost(w, r)
+	if !ok {
+		return
+	}
+	if d.registry.Get(npub) == nil {
+		http.Redirect(w, r, "/admin/watcher", http.StatusSeeOther)
+		return
+	}
+	if err := d.registry.Rearm(npub); err != nil {
+		if errors.Is(err, ErrNotTriggered) {
+			http.Error(w, "watcher is not triggered", http.StatusConflict)
+			return
+		}
+		log.Printf("[admin] rearm %s: %v", npub, err)
+		http.Error(w, "rearm failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
 // snapshotStatus mirrors *DeadManSwitch.currentStatus but works on a
 // WatcherSnapshot + UserConfig pair, so the federation hub can label
 // the user's switch without touching the legacy top-level state.
@@ -699,7 +728,11 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
     <div class="card-title" style="color: var(--red);">Triggered</div>
     <div class="stat-label">Activated at</div>
     <div class="stat-value">{{.TriggeredAt}}</div>
-    <div class="meta"><span>Contact the operator to re-arm</span></div>
+    <div class="meta" style="margin-bottom:0.75rem;"><span>Re-arming clears the triggered state and resumes monitoring. The actions that already fired stay fired.</span></div>
+    <form method="POST" action="/admin/rearm" onsubmit="return confirm('Re-arm this switch? Monitoring will resume from now.');">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn">Re-arm switch</button>
+    </form>
   </div>
   {{end}}
 

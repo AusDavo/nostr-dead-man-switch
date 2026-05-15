@@ -19,10 +19,11 @@ import (
 // blocks until ctx cancels, optionally holding ctx-done for a delay to
 // let tests assert StopAll is synchronous.
 type fakeWatcher struct {
-	npub    string
-	stopped atomic.Bool
-	reloads atomic.Int32
-	holdDur time.Duration
+	npub      string
+	stopped   atomic.Bool
+	reloads   atomic.Int32
+	triggered atomic.Bool
+	holdDur   time.Duration
 }
 
 func (f *fakeWatcher) Run(ctx context.Context) error {
@@ -34,9 +35,11 @@ func (f *fakeWatcher) Run(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeWatcher) Stop()                        {}
-func (f *fakeWatcher) ReloadConfig(uc *UserConfig)  { f.reloads.Add(1) }
-func (f *fakeWatcher) Snapshot() WatcherSnapshot    { return WatcherSnapshot{Npub: f.npub} }
+func (f *fakeWatcher) Stop()                       {}
+func (f *fakeWatcher) ReloadConfig(uc *UserConfig) { f.reloads.Add(1) }
+func (f *fakeWatcher) Snapshot() WatcherSnapshot {
+	return WatcherSnapshot{Npub: f.npub, Triggered: f.triggered.Load()}
+}
 
 type fakeFactory struct {
 	mu      sync.Mutex
@@ -493,6 +496,96 @@ func TestRegistryConcurrentStress(t *testing.T) {
 	fx.r.StopAll()
 	if got := fx.r.List(); len(got) != 0 {
 		t.Fatalf("List after StopAll = %v, want empty", got)
+	}
+}
+
+func TestRegistryRearmClearsStateAndRestarts(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0xee)
+	fx.enroll(t, npub)
+
+	// Seed a triggered state on disk. After Rearm() Stops the running
+	// watcher and re-Starts it, the registry will load this from disk,
+	// clear it, save, and the next Start will see the cleared file.
+	triggeredAt := time.Now().Add(-time.Hour)
+	seeded := NewState()
+	seeded.Triggered = true
+	seeded.TriggeredAt = &triggeredAt
+	seeded.WarningSent = 3
+	seeded.LastSeen = triggeredAt.Add(-2 * time.Hour)
+	seeded.LastEventID = "before-rearm"
+	if err := fx.store.SaveUserState(npub, seeded); err != nil {
+		t.Fatalf("SaveUserState: %v", err)
+	}
+
+	if err := fx.r.Start(npub); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Mark the fake watcher's snapshot as triggered so Rearm's gate passes.
+	// (Real UserWatchers learn this from state on disk; the fake doesn't
+	// touch state.json, so we set it explicitly.)
+	fx.ff.latestFor(npub).triggered.Store(true)
+
+	before := time.Now()
+	if err := fx.r.Rearm(npub); err != nil {
+		t.Fatalf("Rearm: %v", err)
+	}
+
+	// A second watcher should have been created — Rearm = Stop + Start.
+	if n := fx.ff.countFor(npub); n != 2 {
+		t.Fatalf("fake count after Rearm = %d, want 2", n)
+	}
+
+	got, err := fx.store.LoadUserState(npub)
+	if err != nil {
+		t.Fatalf("LoadUserState: %v", err)
+	}
+	if got.Triggered {
+		t.Error("state.Triggered = true after Rearm, want false")
+	}
+	if got.TriggeredAt != nil {
+		t.Errorf("state.TriggeredAt = %v after Rearm, want nil", got.TriggeredAt)
+	}
+	if got.WarningSent != 0 {
+		t.Errorf("state.WarningSent = %d after Rearm, want 0", got.WarningSent)
+	}
+	if !got.LastSeen.After(before.Add(-time.Second)) {
+		t.Errorf("state.LastSeen = %v, not advanced to ~now", got.LastSeen)
+	}
+	if !strings.HasPrefix(got.LastEventID, "rearm:") {
+		t.Errorf("state.LastEventID = %q, want rearm: prefix", got.LastEventID)
+	}
+
+	fx.r.Stop(npub)
+}
+
+func TestRegistryRearmRejectsUntriggered(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0xef)
+	fx.enroll(t, npub)
+	if err := fx.r.Start(npub); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer fx.r.Stop(npub)
+
+	// Fake watcher's snapshot reports Triggered=false (default).
+	err := fx.r.Rearm(npub)
+	if !errors.Is(err, ErrNotTriggered) {
+		t.Fatalf("Rearm err = %v, want ErrNotTriggered", err)
+	}
+	// Original watcher should still be running — Rearm bailed before Stop.
+	if n := fx.ff.countFor(npub); n != 1 {
+		t.Errorf("fake count = %d, want 1 (rejected Rearm should not restart)", n)
+	}
+}
+
+func TestRegistryRearmRejectsNotRunning(t *testing.T) {
+	fx := newRegistryFixture(t)
+	npub := npubFromSeed(t, 0xf0)
+	fx.enroll(t, npub)
+	err := fx.r.Rearm(npub)
+	if !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Rearm on stopped watcher err = %v, want ErrNotRunning", err)
 	}
 }
 

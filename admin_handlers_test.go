@@ -21,13 +21,13 @@ import (
 // exercised by the bootstrap flow, since handleWatcherGenerate and
 // handleWatcherImport need to call registry.Start(npub) successfully.
 type watcherSetupFixture struct {
-	srv     *httptest.Server
-	d       *DeadManSwitch
-	store   *UserStore
-	sealer  *Sealer
-	reg     *Registry
-	userPk  string
-	userSk  string
+	srv      *httptest.Server
+	d        *DeadManSwitch
+	store    *UserStore
+	sealer   *Sealer
+	reg      *Registry
+	userPk   string
+	userSk   string
 	userNpub string
 }
 
@@ -559,6 +559,7 @@ func enrollForCheckIn(t *testing.T, fx *watcherSetupFixture) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/admin", fx.d.requireAuth(fx.d.handleAdmin))
 	mux.HandleFunc("/admin/check-in", fx.d.requireAuth(fx.d.handleAdminCheckIn))
+	mux.HandleFunc("/admin/rearm", fx.d.requireAuth(fx.d.handleAdminRearm))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -689,6 +690,145 @@ func TestAdminCheckInRefusedWhenTriggered(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func TestAdminRearmButtonOnlyWhenTriggered(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	// Untriggered: button absent.
+	req, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(body), `action="/admin/rearm"`) {
+		t.Fatalf("untriggered hub rendered rearm form; body=%s", string(body))
+	}
+
+	// Flip the watcher into triggered state, re-render, expect the button.
+	w := fx.reg.Get(fx.userNpub)
+	if w == nil {
+		t.Fatal("registry.Get returned nil after enroll")
+	}
+	triggeredAt := time.Now().Add(-time.Hour)
+	w.state.mu.Lock()
+	w.state.Triggered = true
+	w.state.TriggeredAt = &triggeredAt
+	w.state.mu.Unlock()
+
+	req2, _ := http.NewRequest("GET", srv.URL+"/admin", nil)
+	req2.AddCookie(fx.sessionCookie())
+	resp2, err := srv.Client().Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if !strings.Contains(string(body2), `action="/admin/rearm"`) {
+		t.Fatalf("triggered hub missing rearm form; body=%s", string(body2))
+	}
+	if !strings.Contains(string(body2), "Re-arm switch") {
+		t.Fatalf("triggered hub missing Re-arm label")
+	}
+}
+
+func TestAdminRearmClearsTriggeredState(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	w := fx.reg.Get(fx.userNpub)
+	if w == nil {
+		t.Fatal("registry.Get returned nil after enroll")
+	}
+	triggeredAt := time.Now().Add(-time.Hour)
+	w.state.mu.Lock()
+	w.state.Triggered = true
+	w.state.TriggeredAt = &triggeredAt
+	w.state.WarningSent = 2
+	w.state.LastSeen = time.Now().Add(-48 * time.Hour)
+	w.state.mu.Unlock()
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/rearm",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+
+	resp, err := noRedirectClient(t, srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin" {
+		t.Fatalf("Location = %q, want /admin", loc)
+	}
+
+	// Rearm restarts the watcher — re-fetch the (new) one and verify
+	// state on it. The new UserWatcher loaded the cleared state from
+	// disk in its constructor.
+	w2 := fx.reg.Get(fx.userNpub)
+	if w2 == nil {
+		t.Fatal("registry.Get returned nil after Rearm")
+	}
+	w2.state.mu.Lock()
+	defer w2.state.mu.Unlock()
+	if w2.state.Triggered {
+		t.Error("state.Triggered = true after rearm, want false")
+	}
+	if w2.state.TriggeredAt != nil {
+		t.Errorf("state.TriggeredAt = %v after rearm, want nil", w2.state.TriggeredAt)
+	}
+	if w2.state.WarningSent != 0 {
+		t.Errorf("state.WarningSent = %d after rearm, want 0", w2.state.WarningSent)
+	}
+	if time.Since(w2.state.LastSeen) > time.Minute {
+		t.Errorf("state.LastSeen = %v, not advanced to ~now", w2.state.LastSeen)
+	}
+}
+
+func TestAdminRearmRejectsUntriggered(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/rearm",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func TestAdminRearmRejectsBadCSRF(t *testing.T) {
+	fx := newWatcherSetupFixture(t)
+	srv := enrollForCheckIn(t, fx)
+
+	form := url.Values{"csrf_token": {"not-a-real-token"}}
+	req, _ := http.NewRequest("POST", srv.URL+"/admin/rearm",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 }
 

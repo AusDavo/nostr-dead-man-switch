@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 // supervisedWatcher is the interface the Registry supervises. Real
@@ -19,10 +20,10 @@ type supervisedWatcher interface {
 
 // supervised is one running watcher under the Registry.
 type supervised struct {
-	w      supervisedWatcher
+	w        supervisedWatcher
 	concrete *UserWatcher // nil when w is a test fake; populated by the real factory for Get()
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
 
 	mu sync.Mutex
 	uc *UserConfig // snapshot of the config at start time, for Reload's relay diff
@@ -75,6 +76,16 @@ func NewRegistry(host *HostConfig, store *UserStore, wl *Whitelist,
 // in the whitelist. Callers above the registry may treat this as a
 // soft error (e.g. a stale whitelist snapshot).
 var ErrNotWhitelisted = errors.New("registry: npub not whitelisted")
+
+// ErrNotTriggered is returned by Rearm when the subject's watcher
+// is not in a triggered state. Re-arming an un-triggered watcher
+// would be a no-op at best and confusing at worst.
+var ErrNotTriggered = errors.New("registry: watcher not triggered")
+
+// ErrNotRunning is returned by Rearm when there is no running watcher
+// for the given npub (so there is nothing to re-arm). Distinguished
+// from ErrNotEnrolled so the caller can pick the right UX response.
+var ErrNotRunning = errors.New("registry: watcher not running")
 
 // ErrNotEnrolled is returned by Start when the subject npub is
 // whitelisted but has no config.json on disk. This is the common state
@@ -207,6 +218,55 @@ func (r *Registry) Reload(npub string) error {
 	s.uc = uc
 	s.mu.Unlock()
 	return nil
+}
+
+// Rearm clears a triggered watcher's state and restarts its goroutine
+// so it resumes monitoring. The Run loop parks itself in the idle
+// branch as soon as it sees Triggered=true (so re-arm cannot be a pure
+// in-memory mutation — the goroutine must be torn down and recreated).
+//
+// Order matters: Stop runs the watcher's deferred final state-save,
+// which would otherwise re-persist the still-triggered state and undo
+// the clear. So we Stop first, then clear-on-disk, then Start.
+//
+// Re-arm semantics treat the subject as alive *now* — LastSeen is
+// advanced to time.Now() with a synthetic "rearm:<unix>" event id,
+// parallel to ManualCheckIn's "manual:<unix>".
+func (r *Registry) Rearm(npub string) error {
+	r.mu.RLock()
+	s, running := r.watchers[npub]
+	r.mu.RUnlock()
+	if !running {
+		return fmt.Errorf("%w: %s", ErrNotRunning, npub)
+	}
+
+	snap := s.w.Snapshot()
+	if !snap.Triggered {
+		return fmt.Errorf("%w: %s", ErrNotTriggered, npub)
+	}
+
+	if err := r.Stop(npub); err != nil {
+		return fmt.Errorf("registry: stopping %s for rearm: %w", npub, err)
+	}
+
+	state, err := r.store.LoadUserState(npub)
+	if err != nil {
+		return fmt.Errorf("registry: loading state for rearm of %s: %w", npub, err)
+	}
+
+	now := time.Now()
+	state.Triggered = false
+	state.TriggeredAt = nil
+	state.WarningSent = 0
+	state.LastSeen = now
+	state.LastEventID = fmt.Sprintf("rearm:%d", now.Unix())
+
+	if err := r.store.SaveUserState(npub, state); err != nil {
+		return fmt.Errorf("registry: saving cleared state for %s: %w", npub, err)
+	}
+
+	log.Printf("[registry] rearmed %s", npub)
+	return r.Start(npub)
 }
 
 // ReloadWhitelist re-reads whitelist.json and reconciles the running
