@@ -303,12 +303,61 @@ In federation mode, enrolled users generate or import their watcher nsec from `/
 
 ## Roadmap
 
-- [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — shipped. Authenticated `/admin/config` form lets each user edit their own `UserConfig` and persists updates via self-DM propagation.
-- [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — shipped as federation v1. One deployment supervises a whitelist of enrolled npubs, each with their own bot key, actions, and timing. See the section below.
-- [x] ~~**v0.1.0 release gate**~~ — CI, multi-arch GHCR image, versioned binary, CHANGELOG, and schema versioning all shipped on 2026-05-13. See [CHANGELOG.md](CHANGELOG.md).
-- [Re-arm from the admin UI](https://github.com/AusDavo/nostr-dead-man-switch/issues/14) — currently a state-file delete + restart; bring it inside the dashboard.
-- [Whitelist gating v1](https://github.com/AusDavo/nostr-dead-man-switch/issues/15) — closed whitelist + invite codes + admin UI for hosts running federated deployments for friends/family.
-- Cross-peer fire coordination (federation v2) — staggered fire slots + receipts so multiple active peers don't double-send actions. v1 limitations described below.
+### Shipped
+
+- [x] ~~[Web dashboard for configuration editing](https://github.com/AusDavo/nostr-dead-man-switch/issues/1)~~ — `/admin/config` form with self-DM propagation.
+- [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — federation v1 with sealed per-tenant watcher nsecs. See the section below.
+- [x] ~~**v0.1.0 release gate**~~ — CI, multi-arch GHCR image, versioned binary, CHANGELOG, schema versioning. See [CHANGELOG.md](CHANGELOG.md).
+- [x] ~~[Re-arm from the admin UI](https://github.com/AusDavo/nostr-dead-man-switch/issues/14)~~ — shipped in v0.1.1.
+
+### v0.2 — Operator onramp
+
+Goal: an Umbrel or Start9 user installs, enrolls, configures, and verifies a test fire without touching a terminal.
+
+- Umbrel App Store submission (`umbrel-app.yml` + screenshots).
+- Start9 marketplace submission (`manifest.yaml` + Tor service config + backup metadata).
+- [Whitelist gating v1](https://github.com/AusDavo/nostr-dead-man-switch/issues/15) — in-UI invite codes so hosts can enroll friends/family from the dashboard.
+- Federation empty-state redesign: zero tenants → enrollment CTA instead of "Watchers: 0".
+- [Design refresh + button-copy pass](https://github.com/AusDavo/nostr-dead-man-switch/issues/20).
+- Docs: Tor + SMTP gotcha on Start9, backup file checklist, surface `--reset-session` + `/health` under an Operations heading.
+
+### v0.3 — Nostr-first triggers
+
+The pre-signed `nostr_event` action is the most philosophically Nostr feature and currently the most hidden. This milestone makes it the showcase.
+
+- In-UI signer wizard for pre-signed events — reuse NIP-07 sign-in to sign the trigger event in-place, no `nak` step.
+- "Obituary" multi-event template — guided flow producing a kind-1 announcement plus a kind-30023 long-form with instructions.
+- Action ordering + per-action retry policy (`after: <id>`, `retries: N`).
+- Webhook HMAC signing so receivers can verify it's really your switch firing.
+
+### v0.4 — Federation v2
+
+Closes the duplicate-firing limitation called out in the federation v1 section below.
+
+- Cross-peer fire coordination — staggered fire slots + fire-receipts published as self-DMs so peers that see a receipt skip their own fire.
+- Cross-peer proof-of-life attestation — peer A publishes "I observed the subject at T" so a relay-partitioned peer B doesn't fire on a stale view.
+- Watcher nsec rotation flow — coordinated rotation as a UI procedure, not a redeploy ritual.
+- NIP-44 gift-wrap propagation (NIPs 17/59) once major hosted relays accept kind-1059.
+
+### v0.5 — Trust but verify
+
+- Per-tenant audit log: warnings sent, test fires, real fires, config changes.
+- "Dry-run today" button — simulate firing now and surface configs that would fail (bad SMTP creds, dead webhook).
+- Optional Prometheus `/metrics` endpoint.
+- Per-tenant external health URL for Uptime Kuma / Healthchecks.io.
+
+### v1.0 — Schema freeze
+
+- Lock `state.json` and `UserConfig` schemas with a documented upgrade path from each 0.x release.
+- External security review of the sealed-nsec path and self-DM propagation.
+- Reproducible builds + signed releases (cosign).
+
+### Parking lot
+
+- Lightning subscription gating for hosts ([#3](https://github.com/AusDavo/nostr-dead-man-switch/issues/3), [#16](https://github.com/AusDavo/nostr-dead-man-switch/issues/16)).
+- NIP-46 bunker signer support — sign trigger events from Amber / nsecBunker without pasting a key.
+- PGP-encrypted email payload for executor/lawyer delivery.
+- Per-action canary mode — fire to a test address every N days so broken SMTP credentials are caught before trigger time.
 
 ## Federation v1
 
