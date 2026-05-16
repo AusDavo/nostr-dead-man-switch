@@ -61,7 +61,8 @@ state_file: "/data/state.json"
 # Everything below fires when the switch triggers.
 # Uncomment the actions you want. You can use as many as you need.
 
-actions: []
+# Uncomment one or more actions below (leave absent for no trigger actions).
+actions:
 
   # ────────────────────────────────────────────────────────
   # EMAIL
