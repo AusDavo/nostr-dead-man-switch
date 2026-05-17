@@ -76,6 +76,28 @@ check_interval: 1h
 	}
 }
 
+func TestConfigNullActionsAllowsUncommentedSibling(t *testing.T) {
+	path := writeTempConfig(t, `watch_pubkey: 3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d
+bot_nsec: 0000000000000000000000000000000000000000000000000000000000000001
+silence_threshold: 7d
+warning_interval: 1d
+warning_count: 2
+check_interval: 1h
+actions:
+
+  # - type: webhook
+  #   config:
+  #     url: https://example.invalid
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(cfg.Actions) != 0 {
+		t.Fatalf("Actions = %+v, want empty slice for null actions", cfg.Actions)
+	}
+}
+
 func TestConfigExplicitFederationV1TrueStaysTrue(t *testing.T) {
 	// Belt-and-braces: watch_pubkey set but operator also set federation_v1: true.
 	// Explicit wins.
