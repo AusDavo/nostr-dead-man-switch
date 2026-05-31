@@ -309,17 +309,24 @@ In federation mode, enrolled users generate or import their watcher nsec from `/
 - [x] ~~[Multi-tenant "Uncle Jim" mode](https://github.com/AusDavo/nostr-dead-man-switch/issues/2)~~ — federation v1 with sealed per-tenant watcher nsecs. See the section below.
 - [x] ~~**v0.1.0 release gate**~~ — CI, multi-arch GHCR image, versioned binary, CHANGELOG, schema versioning. See [CHANGELOG.md](CHANGELOG.md).
 - [x] ~~[Re-arm from the admin UI](https://github.com/AusDavo/nostr-dead-man-switch/issues/14)~~ — shipped in v0.1.1.
+- [x] ~~[Whitelist gating v1](https://github.com/AusDavo/nostr-dead-man-switch/issues/15)~~ — in-UI invite codes, `admin_npub` auto-enroll, `/admin/signup` redemption, and an `/admin/roster` admin UI. Shipped in v0.2.0–v0.2.2. Enrollment is now terminal-free.
 
 ### v0.2 — Operator onramp
 
 Goal: an Umbrel or Start9 user installs, enrolls, configures, and verifies a test fire without touching a terminal.
 
+The functional onramp shipped with whitelist gating v1 (above) — a host can now enroll friends and family entirely from the dashboard. What remains is presentation quality, then marketplace packaging. **Packaging is gated behind the polish pass**: we submit once the UI is something we'd want a first-time Umbrel/Start9 user to see, not before.
+
+**Presentation polish (do first):**
+
+- [Design refresh + button-copy pass](https://github.com/AusDavo/nostr-dead-man-switch/issues/20) — bring the whole admin/auth surface to an "impeccable" finish.
+- Federation empty-state redesign: zero tenants → enrollment CTA instead of "Watchers: 0".
+- Docs: Tor + SMTP gotcha on Start9, backup file checklist, surface `--reset-session` + `/health` under an Operations heading.
+
+**Marketplace packaging (gated behind the polish pass):**
+
 - Umbrel App Store submission (`umbrel-app.yml` + screenshots).
 - Start9 marketplace submission (`manifest.yaml` + Tor service config + backup metadata).
-- [Whitelist gating v1](https://github.com/AusDavo/nostr-dead-man-switch/issues/15) — in-UI invite codes so hosts can enroll friends/family from the dashboard.
-- Federation empty-state redesign: zero tenants → enrollment CTA instead of "Watchers: 0".
-- [Design refresh + button-copy pass](https://github.com/AusDavo/nostr-dead-man-switch/issues/20).
-- Docs: Tor + SMTP gotcha on Start9, backup file checklist, surface `--reset-session` + `/health` under an Operations heading.
 
 ### v0.3 — Nostr-first triggers
 
