@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-05-31
+
+Patch release. Roster UX polish on top of v0.2.0.
+
+### Admin roster
+
+- Minting an invite code now shows a full, one-click-copyable signup
+  link (`https://<host>/admin/signup?code=…`) with a **Copy link**
+  button, instead of just the bare code and a relative path. The link is
+  built from the request, so it resolves to the correct public hostname
+  behind a TLS-terminating reverse proxy (honors `X-Forwarded-Proto`).
+
+[0.2.1]: https://github.com/AusDavo/nostr-dead-man-switch/releases/tag/v0.2.1
+
 ## [0.2.0] — 2026-05-31
 
 Minor release. The v0.2 "operator onramp" milestone: federation enrollment
