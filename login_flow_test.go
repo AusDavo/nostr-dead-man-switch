@@ -86,8 +86,8 @@ func TestLoginFlow_HappyPath(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("unauth /admin status = %d, want 303", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/login" {
-		t.Fatalf("redirect to %q, want /login", loc)
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("redirect to %q, want /login…", loc)
 	}
 
 	// Get a challenge.
@@ -400,6 +400,70 @@ func TestLoginFlow_FederationWhitelistedUnenrolledRedirectsToBootstrap(t *testin
 	if loc := adminResp.Header.Get("Location"); loc != "/admin/watcher" {
 		t.Fatalf("/admin redirect to %q, want /admin/watcher", loc)
 	}
+}
+
+func TestSanitizeNext(t *testing.T) {
+	cases := map[string]string{
+		"/admin/signup?code=ABC": "/admin/signup?code=ABC",
+		"/admin":                 "/admin",
+		"":                       "",
+		"//evil.com":             "", // protocol-relative
+		"https://evil.com":       "", // absolute / scheme
+		"/\\evil":                "", // backslash
+		"/x\twith\ttab":          "", // control char
+	}
+	for in, want := range cases {
+		if got := sanitizeNext(in); got != want {
+			t.Errorf("sanitizeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A logged-out invitee clicking /admin/signup?code=… is bounced to
+// /login with a next= param; after signing in, verify must echo that
+// destination so the code survives the round-trip. Open-redirect
+// targets are dropped back to /admin.
+func TestLoginVerify_HonorsAndSanitizesNext(t *testing.T) {
+	mk := func(t *testing.T) (*httptest.Server, string) {
+		sk := nostr.GeneratePrivateKey()
+		pk, _ := nostr.GetPublicKey(sk)
+		npub, _ := nip19.EncodePublicKey(pk)
+		srv, _ := federationTestServer(t, []string{npub}, nil)
+		return srv, sk
+	}
+	verifyWithNext := func(t *testing.T, srv *httptest.Server, sk, next string) string {
+		client := srv.Client()
+		resp, _ := client.Get(srv.URL + "/login/challenge")
+		var cr struct{ Challenge string }
+		json.NewDecoder(resp.Body).Decode(&cr)
+		resp.Body.Close()
+		signed := signChallenge(t, sk, cr.Challenge)
+		body, _ := json.Marshal(map[string]any{"signedEvent": json.RawMessage(signed), "next": next})
+		resp, _ = client.Post(srv.URL+"/login/verify", "application/json", bytes.NewReader(body))
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("verify status = %d body=%s", resp.StatusCode, b)
+		}
+		var out struct{ Redirect string }
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out.Redirect
+	}
+
+	t.Run("honored", func(t *testing.T) {
+		srv, sk := mk(t)
+		defer srv.Close()
+		if got := verifyWithNext(t, srv, sk, "/admin/signup?code=ABC"); got != "/admin/signup?code=ABC" {
+			t.Fatalf("redirect = %q, want /admin/signup?code=ABC", got)
+		}
+	})
+	t.Run("open-redirect dropped", func(t *testing.T) {
+		srv, sk := mk(t)
+		defer srv.Close()
+		if got := verifyWithNext(t, srv, sk, "//evil.com"); got != "/admin" {
+			t.Fatalf("redirect = %q, want /admin (open-redirect rejected)", got)
+		}
+	})
 }
 
 func TestLoginVerify_LegacyStillMatchesSinglePubkey(t *testing.T) {

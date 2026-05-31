@@ -124,8 +124,8 @@ func TestWatcherSetupUnauthedRedirects(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/login" {
-		t.Fatalf("Location = %q, want /login", loc)
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("Location = %q, want /login…", loc)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +16,20 @@ import (
 
 	nip19pkg "github.com/nbd-wtf/go-nostr/nip19"
 )
+
+// sanitizeNext returns raw if it is a safe same-origin redirect target
+// (an absolute path on this host), else "". Guards the post-login
+// redirect against open-redirect abuse: rejects protocol-relative
+// ("//evil"), scheme-bearing, and control-char inputs.
+func sanitizeNext(raw string) string {
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return ""
+	}
+	if strings.ContainsAny(raw, "\\\r\n\t") {
+		return ""
+	}
+	return raw
+}
 
 const loginVerifyMaxBytes = 16 * 1024
 
@@ -88,7 +103,16 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 func (d *DeadManSwitch) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if d.sessions == nil || d.sessions.pubkeyFromRequest(r) == "" {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			loginURL := "/login"
+			// Preserve the original destination (e.g. an invite link
+			// /admin/signup?code=…) across the login round-trip so a
+			// logged-out visitor isn't dropped on /admin after signing in.
+			if r.Method == http.MethodGet {
+				if rt := sanitizeNext(r.URL.RequestURI()); rt != "" {
+					loginURL = "/login?next=" + url.QueryEscape(rt)
+				}
+			}
+			http.Redirect(w, r, loginURL, http.StatusSeeOther)
 			return
 		}
 		next(w, r)
@@ -96,12 +120,17 @@ func (d *DeadManSwitch) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (d *DeadManSwitch) handleLogin(w http.ResponseWriter, r *http.Request) {
+	next := sanitizeNext(r.URL.Query().Get("next"))
 	if d.sessions != nil && d.sessions.pubkeyFromRequest(r) != "" {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		dest := "/admin"
+		if next != "" {
+			dest = next
+		}
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	loginTemplate.Execute(w, nil)
+	loginTemplate.Execute(w, map[string]string{"Next": next})
 }
 
 func (d *DeadManSwitch) handleLoginChallenge(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +173,7 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 
 	var payload struct {
 		SignedEvent json.RawMessage `json:"signedEvent"`
+		Next        string          `json:"next"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || len(payload.SignedEvent) == 0 {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -188,8 +218,12 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 	}
 
 	d.sessions.setCookie(w, r, d.sessions.issue(pubkey))
+	redirect := "/admin"
+	if n := sanitizeNext(payload.Next); n != "" {
+		redirect = n
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"redirect": "/admin"})
+	json.NewEncoder(w).Encode(map[string]string{"redirect": redirect})
 }
 
 // isAuthorizedLogin reports whether the given hex pubkey can establish a
@@ -800,6 +834,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
   <a href="/" class="back">← back to status</a>
 </div>
 <script>
+const nextParam = {{.Next}};
 const btn = document.getElementById('signin');
 const errEl = document.getElementById('err');
 function showErr(msg){ errEl.textContent = msg; errEl.classList.add('show'); btn.disabled = false; btn.textContent = 'Sign in with Nostr'; }
@@ -820,11 +855,11 @@ btn.addEventListener('click', async () => {
     const vr = await fetch('/login/verify', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ signedEvent: signed })
+      body: JSON.stringify({ signedEvent: signed, next: nextParam })
     });
     if (!vr.ok) { const t = await vr.text(); throw new Error(t || 'Verification failed'); }
     const { redirect } = await vr.json();
-    window.location.href = redirect || '/admin';
+    window.location.href = redirect || nextParam || '/admin';
   } catch (e) {
     showErr(e.message || String(e));
   }

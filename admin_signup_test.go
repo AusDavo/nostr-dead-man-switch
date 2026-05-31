@@ -100,13 +100,19 @@ func pkOf(npub string) string {
 
 func TestSignupUnauthedRedirectsToLogin(t *testing.T) {
 	fx := newSignupFixture(t, nil)
-	resp := fx.get(t, "", "/admin/signup")
+	resp := fx.get(t, "", "/admin/signup?code=ABC123")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/login" {
-		t.Fatalf("Location = %q, want /login", loc)
+	// Must bounce to /login but preserve the invite destination so the
+	// code survives the sign-in round-trip.
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("Location = %q, want /login…", loc)
+	}
+	if !strings.Contains(loc, "next=") || !strings.Contains(loc, "code%3DABC123") {
+		t.Fatalf("Location = %q, want a next= carrying the signup code", loc)
 	}
 }
 

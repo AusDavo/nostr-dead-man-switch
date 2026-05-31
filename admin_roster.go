@@ -61,22 +61,28 @@ type rosterData struct {
 	Codes     []InviteCodeView
 	NewCode   string
 	ShareLink string
+	BaseURL   string
 	Flash     string
 }
 
-// signupShareLink builds the absolute /admin/signup?code=… URL an admin
-// hands to an invitee. Scheme/host come from the request so it works
-// behind a TLS-terminating reverse proxy (X-Forwarded-Proto) as well as
-// direct. Returns "" for an empty code.
-func signupShareLink(r *http.Request, code string) string {
-	if code == "" {
-		return ""
-	}
+// signupBaseURL returns the scheme://host the dashboard is reached at,
+// derived from the request so it resolves correctly behind a
+// TLS-terminating reverse proxy (X-Forwarded-Proto) as well as direct.
+func signupBaseURL(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + "/admin/signup?code=" + url.QueryEscape(code)
+	return scheme + "://" + r.Host
+}
+
+// signupShareLink builds the absolute /admin/signup?code=… URL an admin
+// hands to an invitee. Returns "" for an empty code.
+func signupShareLink(r *http.Request, code string) string {
+	if code == "" {
+		return ""
+	}
+	return signupBaseURL(r) + "/admin/signup?code=" + url.QueryEscape(code)
 }
 
 // handleRoster renders the admin roster: enrolled users (plan, added,
@@ -131,6 +137,7 @@ func (d *DeadManSwitch) handleRoster(w http.ResponseWriter, r *http.Request) {
 		Codes:     codes,
 		NewCode:   newCode,
 		ShareLink: signupShareLink(r, newCode),
+		BaseURL:   signupBaseURL(r),
 		Flash:     strings.TrimSpace(r.URL.Query().Get("flash")),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -264,6 +271,8 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   button.primary:hover { filter: brightness(1.05); }
   button.danger { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(210,104,94,0.4); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
   button.danger:hover { background: rgba(210,104,94,0.08); }
+  button.ghost { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--accent); border: 1px solid var(--accent); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
+  button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
   .empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }
   .card-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); text-transform: none; letter-spacing: normal; margin-bottom: 0.75rem; }
 </style>
@@ -274,12 +283,12 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
 
   {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
   {{if .NewCode}}<div class="newcode">
-    New invite code minted — share this link (it's shown once):
+    New invite code minted — share this link:
     <div class="share-row">
       <input id="share-link" type="text" readonly value="{{.ShareLink}}" onclick="this.select()">
-      <button type="button" class="primary" id="copy-link" onclick="copyShareLink()">Copy link</button>
+      <button type="button" class="primary" onclick="copyText(this.previousElementSibling.value, this)">Copy link</button>
     </div>
-    <div class="muted" style="margin-top:0.4rem">Code: <code>{{.NewCode}}</code></div>
+    <div class="muted" style="margin-top:0.4rem">It also appears in the list below, where you can copy or revoke it anytime.</div>
   </div>{{end}}
 
   <div class="card">
@@ -340,11 +349,14 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
         <td class="npub">{{if .UsedBy}}{{.UsedBy}}{{else}}—{{end}}</td>
         <td>
           {{if eq .State "available"}}
-          <form class="inline" method="POST" action="/admin/roster/invite/revoke">
-            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <input type="hidden" name="code" value="{{.Code}}">
-            <button type="submit" class="danger">Revoke</button>
-          </form>
+          <div class="inline">
+            <button type="button" class="ghost" data-link="{{$.BaseURL}}/admin/signup?code={{.Code}}" onclick="copyText(this.dataset.link, this)">Copy link</button>
+            <form class="inline" method="POST" action="/admin/roster/invite/revoke">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="code" value="{{.Code}}">
+              <button type="submit" class="danger">Revoke</button>
+            </form>
+          </div>
           {{end}}
         </td>
       </tr>
@@ -363,16 +375,24 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   </div>
 </div>
 <script>
-function copyShareLink(){
-  const el = document.getElementById('share-link');
-  const btn = document.getElementById('copy-link');
-  if (!el) return;
-  el.select();
-  const done = () => { if (btn) { const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = t; }, 1500); } };
+function flashCopied(btn){
+  if (!btn) return;
+  const t = btn.textContent;
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = t; }, 1500);
+}
+function legacyCopy(text){
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+function copyText(text, btn){
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(el.value).then(done).catch(() => { document.execCommand('copy'); done(); });
+    navigator.clipboard.writeText(text).then(() => flashCopied(btn)).catch(() => { legacyCopy(text); flashCopied(btn); });
   } else {
-    document.execCommand('copy'); done();
+    legacyCopy(text); flashCopied(btn);
   }
 }
 </script>
