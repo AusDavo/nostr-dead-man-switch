@@ -3,6 +3,7 @@ package main
 import (
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -54,12 +55,28 @@ type rosterRow struct {
 }
 
 type rosterData struct {
-	Npub    string
-	CSRF    string
-	Rows    []rosterRow
-	Codes   []InviteCodeView
-	NewCode string
-	Flash   string
+	Npub      string
+	CSRF      string
+	Rows      []rosterRow
+	Codes     []InviteCodeView
+	NewCode   string
+	ShareLink string
+	Flash     string
+}
+
+// signupShareLink builds the absolute /admin/signup?code=… URL an admin
+// hands to an invitee. Scheme/host come from the request so it works
+// behind a TLS-terminating reverse proxy (X-Forwarded-Proto) as well as
+// direct. Returns "" for an empty code.
+func signupShareLink(r *http.Request, code string) string {
+	if code == "" {
+		return ""
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + "/admin/signup?code=" + url.QueryEscape(code)
 }
 
 // handleRoster renders the admin roster: enrolled users (plan, added,
@@ -106,13 +123,15 @@ func (d *DeadManSwitch) handleRoster(w http.ResponseWriter, r *http.Request) {
 		codes = d.invites.ListCodes()
 	}
 
+	newCode := strings.TrimSpace(r.URL.Query().Get("new_code"))
 	data := rosterData{
-		Npub:    truncateMiddle(npub, 24),
-		CSRF:    d.sessions.issueCSRFToken(pubkey),
-		Rows:    rows,
-		Codes:   codes,
-		NewCode: strings.TrimSpace(r.URL.Query().Get("new_code")),
-		Flash:   strings.TrimSpace(r.URL.Query().Get("flash")),
+		Npub:      truncateMiddle(npub, 24),
+		CSRF:      d.sessions.issueCSRFToken(pubkey),
+		Rows:      rows,
+		Codes:     codes,
+		NewCode:   newCode,
+		ShareLink: signupShareLink(r, newCode),
+		Flash:     strings.TrimSpace(r.URL.Query().Get("flash")),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	rosterTemplate.Execute(w, data)
@@ -236,7 +255,9 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   .muted { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
   .flash { background: rgba(214,164,65,0.08); border: 1px solid rgba(214,164,65,0.4); color: var(--yellow); padding: 0.6rem 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-bottom: 1rem; }
   .newcode { background: rgba(111,168,106,0.08); border: 1px solid rgba(111,168,106,0.4); color: var(--text); padding: 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; }
-  .newcode code { font-family: var(--font-mono); font-size: var(--text-base); color: var(--accent); user-select: all; }
+  .newcode code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--accent); user-select: all; }
+  .share-row { display: flex; gap: 0.5rem; align-items: stretch; margin-top: 0.5rem; }
+  .share-row input { flex: 1; font-family: var(--font-mono); font-size: var(--text-xs); }
   form.inline { display: flex; gap: 0.5rem; align-items: center; margin: 0; }
   form.inline input[type=text] { flex: 1; }
   button.primary { padding: 0.5rem 0.85rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
@@ -252,7 +273,14 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   <h1>Roster <span class="npub">{{.Npub}}</span></h1>
 
   {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
-  {{if .NewCode}}<div class="newcode">New invite code (copy it now): <code>{{.NewCode}}</code><div class="muted" style="margin-top:0.4rem">Share <code style="font-size:var(--text-xs)">/admin/signup?code={{.NewCode}}</code> with the person you're inviting.</div></div>{{end}}
+  {{if .NewCode}}<div class="newcode">
+    New invite code minted — share this link (it's shown once):
+    <div class="share-row">
+      <input id="share-link" type="text" readonly value="{{.ShareLink}}" onclick="this.select()">
+      <button type="button" class="primary" id="copy-link" onclick="copyShareLink()">Copy link</button>
+    </div>
+    <div class="muted" style="margin-top:0.4rem">Code: <code>{{.NewCode}}</code></div>
+  </div>{{end}}
 
   <div class="card">
     <div class="card-title">Enrolled users ({{len .Rows}})</div>
@@ -334,5 +362,19 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
     <form method="POST" action="/logout"><button type="submit" class="btn">Sign out</button></form>
   </div>
 </div>
+<script>
+function copyShareLink(){
+  const el = document.getElementById('share-link');
+  const btn = document.getElementById('copy-link');
+  if (!el) return;
+  el.select();
+  const done = () => { if (btn) { const t = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = t; }, 1500); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(el.value).then(done).catch(() => { document.execCommand('copy'); done(); });
+  } else {
+    document.execCommand('copy'); done();
+  }
+}
+</script>
 </body>
 </html>`))

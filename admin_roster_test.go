@@ -284,6 +284,25 @@ func TestRosterGrantAndRevoke(t *testing.T) {
 	}
 }
 
+func TestSignupShareLink(t *testing.T) {
+	// Direct TLS.
+	rTLS := httptest.NewRequest("GET", "https://deadman.example/admin/roster", nil)
+	if got := signupShareLink(rTLS, "ABC123"); got != "https://deadman.example/admin/signup?code=ABC123" {
+		t.Fatalf("TLS link = %q", got)
+	}
+	// Behind a TLS-terminating proxy (Caddy sets X-Forwarded-Proto).
+	rProxy := httptest.NewRequest("GET", "http://deadman.dpinkerton.com/admin/roster", nil)
+	rProxy.Header.Set("X-Forwarded-Proto", "https")
+	want := "https://deadman.dpinkerton.com/admin/signup?code=ABC123"
+	if got := signupShareLink(rProxy, "ABC123"); got != want {
+		t.Fatalf("proxied link = %q, want %q", got, want)
+	}
+	// Empty code → empty link.
+	if got := signupShareLink(rTLS, ""); got != "" {
+		t.Fatalf("empty-code link = %q, want empty", got)
+	}
+}
+
 func TestRosterAdminCanView(t *testing.T) {
 	fx := newRosterFixture(t)
 	req, _ := http.NewRequest("GET", fx.srv.URL+"/admin/roster", nil)
