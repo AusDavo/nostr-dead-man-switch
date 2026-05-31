@@ -4,6 +4,43 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-05-31
+
+Minor release. The v0.2 "operator onramp" milestone: federation enrollment
+is now terminal-free, the precondition for one-click Umbrel/Start9 packaging.
+
+### Federation enrollment (whitelist gating v1)
+
+- `admin_npub` config field: its holder is auto-enrolled as `plan=admin`
+  and gets a roster management UI at `/admin/roster` — see enrolled users
+  (plan, added-at, running, last-seen), grant/revoke access, and
+  mint/revoke invite codes, all from the browser.
+- Invite codes: the admin mints single-use codes and shares
+  `/admin/signup?code=…`. A friend redeems one in-browser and self-enrolls
+  as `plan=invite`, then bootstraps their watcher key — no shell access
+  needed. Configure static boot codes with `invite_codes`, or mint at
+  runtime from the roster (or `--generate-invite`).
+- Friendly closed page: an npub that arrives without a valid code sees an
+  "invite-only host" page showing their npub to share with the operator,
+  instead of a raw 401.
+- New CLI flags: `--grant-free npub1…` (admit as `plan=free`) and
+  `--generate-invite` (mint a code). `--whitelist-list` now shows a
+  `plan=` column.
+- Revocation goes through the same teardown path a future expiry sweep
+  will use — `registry.Stop → store.DeleteUser → whitelist.Remove` — and
+  never fires trigger actions, enforced by a regression test.
+
+### Compatibility
+
+- A pre-plan `whitelist.json` (version 1) loads unchanged; existing
+  entries are grandfathered (`plan_kind` empty) and never auto-modified.
+  The file is rewritten at version 2 on the next mutation.
+- Zero-config upgrade (no `admin_npub`, no `invite_codes`) behaves exactly
+  as before: a closed, CLI-enrolled host — the only visible change is the
+  friendly closed page replacing the old hard 401.
+
+[0.2.0]: https://github.com/AusDavo/nostr-dead-man-switch/releases/tag/v0.2.0
+
 ## [0.1.1] — 2026-05-15
 
 Patch release. One operator-facing feature plus a small polish pass.
