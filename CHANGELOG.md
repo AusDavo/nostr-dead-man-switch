@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-05-31
+
+Patch release. Fixes for the v0.2 invite flow.
+
+### Fixed
+
+- **Invite links now work for logged-out recipients.** Visiting
+  `/admin/signup?code=…` while signed out bounced to `/login` and dropped
+  the `code` on the way, so after signing in the visitor landed on the
+  closed page and the code was never redeemed. The login flow now
+  preserves the original destination through the round-trip (a sanitized,
+  same-origin `next` — open-redirect targets are rejected), so the code
+  survives sign-in.
+
+### Admin roster
+
+- Dropped the misleading "shown once" note on a freshly minted code —
+  invite codes are listed in the roster, not one-time secrets. Every
+  available code in the list now has its own **Copy link** button.
+
+[0.2.2]: https://github.com/AusDavo/nostr-dead-man-switch/releases/tag/v0.2.2
+
 ## [0.2.1] — 2026-05-31
 
 Patch release. Roster UX polish on top of v0.2.0.
