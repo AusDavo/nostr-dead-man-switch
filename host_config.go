@@ -14,6 +14,9 @@ type HostConfig struct {
 	WatcherStoreKeyEnv string
 	WhitelistFile      string
 	FederationV1       bool
+	AdminNpub          string
+	AdminPubkeyHex     string
+	InviteCodes        []string
 	Location           *time.Location
 }
 
@@ -23,6 +26,8 @@ type HostConfig struct {
 func (c *Config) Host() *HostConfig {
 	relays := make([]string, len(c.Relays))
 	copy(relays, c.Relays)
+	inviteCodes := make([]string, len(c.InviteCodes))
+	copy(inviteCodes, c.InviteCodes)
 	return &HostConfig{
 		Relays:             relays,
 		ListenAddr:         c.ListenAddr,
@@ -31,6 +36,9 @@ func (c *Config) Host() *HostConfig {
 		WatcherStoreKeyEnv: c.WatcherStoreKeyEnv,
 		WhitelistFile:      c.WhitelistFile,
 		FederationV1:       c.FederationV1,
+		AdminNpub:          c.AdminNpub,
+		AdminPubkeyHex:     c.adminPubkeyHex,
+		InviteCodes:        inviteCodes,
 		Location:           c.location,
 	}
 }

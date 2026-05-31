@@ -344,6 +344,10 @@ func (r *Registry) Sealer() *Sealer { return r.sealer }
 // Store returns the *UserStore this registry was built with.
 func (r *Registry) Store() *UserStore { return r.store }
 
+// Whitelist returns the *Whitelist this registry was built with. The
+// signup and roster handlers use it to add/tag/remove entries.
+func (r *Registry) Whitelist() *Whitelist { return r.wl }
+
 // Host returns the *HostConfig this registry was built with. Callers
 // use it to seed new UserConfigs with host-level defaults.
 func (r *Registry) Host() *HostConfig { return r.host }

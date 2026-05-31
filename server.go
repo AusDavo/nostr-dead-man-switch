@@ -53,6 +53,12 @@ func (d *DeadManSwitch) startServer(ctx context.Context) {
 	mux.HandleFunc("/login/verify", d.handleLoginVerify)
 	mux.HandleFunc("/logout", d.handleLogout)
 	mux.HandleFunc("/admin", d.requireAuth(d.handleAdmin))
+	mux.HandleFunc("/admin/signup", d.requireAuth(d.handleSignupLanding))
+	mux.HandleFunc("/admin/roster", d.requireAuth(d.handleRoster))
+	mux.HandleFunc("/admin/roster/grant", d.requireAuth(d.handleRosterGrant))
+	mux.HandleFunc("/admin/roster/revoke", d.requireAuth(d.handleRosterRevoke))
+	mux.HandleFunc("/admin/roster/invite/new", d.requireAuth(d.handleRosterInviteNew))
+	mux.HandleFunc("/admin/roster/invite/revoke", d.requireAuth(d.handleRosterInviteRevoke))
 	mux.HandleFunc("/admin/watcher", d.requireAuth(d.handleWatcherSetup))
 	mux.HandleFunc("/admin/watcher/generate", d.requireAuth(d.handleWatcherGenerate))
 	mux.HandleFunc("/admin/watcher/import", d.requireAuth(d.handleWatcherImport))
@@ -187,12 +193,14 @@ func (d *DeadManSwitch) handleLoginVerify(w http.ResponseWriter, r *http.Request
 }
 
 // isAuthorizedLogin reports whether the given hex pubkey can establish a
-// dashboard session. In federation mode the npub must be whitelisted;
-// enrollment state is checked downstream by handleAdminFederation and
-// the other authed handlers, which redirect unenrolled users to
-// /admin/watcher to bootstrap. Conflating "is allowed" with "is
-// running" here would lock out new whitelisted users (who haven't
-// bootstrapped yet) and users whose watcher failed to start at boot.
+// dashboard session. In federation mode any validly-formatted pubkey may
+// get a session — a session by itself grants nothing. Whitelist
+// membership, enrollment, and admin identity are each gated independently
+// downstream: the privileged handlers (handleAdminFederation,
+// handleWatcherSetup, the roster handlers) redirect a non-whitelisted
+// session to /admin/signup, where it can only see the closed page or
+// redeem an invite code. Gating sessions here instead would lock out
+// newcomers arriving at /admin/signup?code=… before they're whitelisted.
 // In legacy mode it matches the single configured watch_pubkey.
 func (d *DeadManSwitch) isAuthorizedLogin(pubHex string) bool {
 	if pubHex == "" {
@@ -202,11 +210,11 @@ func (d *DeadManSwitch) isAuthorizedLogin(pubHex string) bool {
 		if d.registry == nil {
 			return false
 		}
-		npub, err := formatNpub(pubHex)
-		if err != nil {
+		// Any well-formed pubkey gets a session; downstream handlers gate.
+		if _, err := formatNpub(pubHex); err != nil {
 			return false
 		}
-		return d.registry.IsWhitelisted(npub)
+		return true
 	}
 	return pubHex == d.cfg.watchPubkeyHex
 }

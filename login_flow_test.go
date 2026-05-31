@@ -306,7 +306,12 @@ func TestLoginVerify_FederationWhitelistedNpubSucceeds(t *testing.T) {
 	}
 }
 
-func TestLoginVerify_FederationNonWhitelistedFails(t *testing.T) {
+// In federation mode any validly-signed login establishes a session — a
+// session by itself grants nothing. Whitelist membership is enforced
+// downstream (the privileged handlers redirect non-whitelisted sessions
+// to /admin/signup). A non-whitelisted signer therefore gets 200 here,
+// not 401. See TestSignupNoCodeShowsClosedPage for the downstream gate.
+func TestLoginVerify_FederationNonWhitelistedGetsSession(t *testing.T) {
 	sk := nostr.GeneratePrivateKey()
 
 	enrolled := nostr.GeneratePrivateKey()
@@ -318,9 +323,9 @@ func TestLoginVerify_FederationNonWhitelistedFails(t *testing.T) {
 
 	resp := getChallengeAndVerify(t, srv, sk)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d body=%s, want 401", resp.StatusCode, b)
+		t.Fatalf("status = %d body=%s, want 200", resp.StatusCode, b)
 	}
 }
 

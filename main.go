@@ -22,6 +22,8 @@ func main() {
 	whitelistNote := flag.String("whitelist-note", "", "note to attach with --whitelist-add")
 	whitelistRemove := flag.String("whitelist-remove", "", "remove npub from whitelist and exit")
 	whitelistList := flag.Bool("whitelist-list", false, "list whitelist entries and exit")
+	grantFree := flag.String("grant-free", "", "add npub to whitelist as plan=free and exit")
+	generateInvite := flag.Bool("generate-invite", false, "mint a new invite code and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -52,6 +54,34 @@ func main() {
 	if handled, err := handleWhitelistCLI(os.Stdout, cfg.WhitelistFile, *whitelistAdd, *whitelistNote, *whitelistRemove, *whitelistList); err != nil {
 		log.Fatalf("Whitelist: %v", err)
 	} else if handled {
+		return
+	}
+
+	if *grantFree != "" {
+		wl, err := LoadWhitelist(cfg.WhitelistFile)
+		if err != nil {
+			log.Fatalf("Whitelist: %v", err)
+		}
+		if err := wl.Add(*grantFree, "granted by admin (cli)"); err != nil {
+			log.Fatalf("grant-free: %v", err)
+		}
+		if err := wl.SetPlanKind(*grantFree, "free"); err != nil {
+			log.Fatalf("grant-free: %v", err)
+		}
+		fmt.Printf("granted %s as plan=free (%s)\n", *grantFree, cfg.WhitelistFile)
+		return
+	}
+
+	if *generateInvite {
+		invites, err := LoadInviteCodes(cfg.StateDir, cfg.InviteCodes)
+		if err != nil {
+			log.Fatalf("generate-invite: %v", err)
+		}
+		code, err := invites.Mint()
+		if err != nil {
+			log.Fatalf("generate-invite: %v", err)
+		}
+		fmt.Printf("new invite code: %s\nshare: /admin/signup?code=%s\n", code, code)
 		return
 	}
 

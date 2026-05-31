@@ -30,13 +30,16 @@ type Config struct {
 
 	// Federation v1 fields. All unused until FederationV1 flips true;
 	// consumed by the per-user registry (#6) and migration (#5).
-	StateDir           string `yaml:"state_dir"`
-	WatcherStoreKeyEnv string `yaml:"watcher_store_key_env"`
-	WhitelistFile      string `yaml:"whitelist_file"`
-	FederationV1       bool   `yaml:"federation_v1"`
+	StateDir           string   `yaml:"state_dir"`
+	WatcherStoreKeyEnv string   `yaml:"watcher_store_key_env"`
+	WhitelistFile      string   `yaml:"whitelist_file"`
+	FederationV1       bool     `yaml:"federation_v1"`
+	AdminNpub          string   `yaml:"admin_npub"`
+	InviteCodes        []string `yaml:"invite_codes"`
 
 	// Derived at load time
 	watchPubkeyHex string
+	adminPubkeyHex string
 	botPrivkeyHex  string
 	botPubkeyHex   string
 	location       *time.Location
@@ -167,6 +170,20 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("deriving bot pubkey: %w", err)
 	}
 	cfg.botPubkeyHex = pub
+
+	// Decode admin pubkey (npub or hex). Empty admin_npub is allowed —
+	// it just means no auto-enrolled admin / roster UI on this host.
+	if cfg.AdminNpub != "" {
+		if strings.HasPrefix(cfg.AdminNpub, "npub") {
+			_, v, err := nip19.Decode(cfg.AdminNpub)
+			if err != nil {
+				return nil, fmt.Errorf("decoding admin_npub: %w", err)
+			}
+			cfg.adminPubkeyHex = v.(string)
+		} else {
+			cfg.adminPubkeyHex = cfg.AdminNpub
+		}
+	}
 
 	// Defaults
 	if cfg.WarningCount == 0 {

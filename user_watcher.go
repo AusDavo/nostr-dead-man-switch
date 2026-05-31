@@ -268,6 +268,9 @@ func (w *UserWatcher) evaluate(ctx context.Context) {
 		if err := w.store.SaveUserState(npub, w.state); err != nil {
 			log.Printf("[watcher %s] trigger save: %v", npub, err)
 		}
+		// INVARIANT: only the evaluate loop may call execActions. Roster
+		// revocation and CLI teardown go through registry.Stop → store.DeleteUser
+		// → wl.Remove and must never reach this dispatch.
 		w.execActions(ctx, w.host, uc, w.watcherPriv, w.watcherPub, w.subjectPub, uc.Actions)
 		return
 	}

@@ -79,6 +79,10 @@ func (d *DeadManSwitch) handleWatcherSetup(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if !d.registry.IsWhitelisted(npub) {
+		http.Redirect(w, r, "/admin/signup", http.StatusSeeOther)
+		return
+	}
 	store := d.registry.Store()
 	if store == nil {
 		http.Error(w, "user store unavailable", http.StatusServiceUnavailable)
@@ -448,6 +452,7 @@ type adminHubData struct {
 	StartedAt     string
 	WatcherNpub   string
 	HasNostrDM    bool
+	IsAdmin       bool
 	CSRF          string
 }
 
@@ -465,6 +470,10 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 	}
 	if d.registry == nil {
 		http.Error(w, "registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !d.registry.IsWhitelisted(npub) {
+		http.Redirect(w, r, "/admin/signup", http.StatusSeeOther)
 		return
 	}
 
@@ -501,6 +510,7 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 		Triggered:    snap.Triggered,
 		Relays:       snap.RelayStatuses,
 		StartedAt:    d.startedAt.In(loc).Format(tfmt),
+		IsAdmin:      d.cfg.adminPubkeyHex != "" && pubkey == d.cfg.adminPubkeyHex,
 		CSRF:         d.sessions.issueCSRFToken(pubkey),
 	}
 	if !snap.LastSeen.IsZero() {
@@ -749,6 +759,7 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
   <div class="actions">
     <a class="btn" href="/admin/config">Configuration</a>
     <a class="btn" href="/admin/watcher">Watcher key</a>
+    {{if .IsAdmin}}<a class="btn" href="/admin/roster">Roster</a>{{end}}
     <a class="btn" href="/">Status</a>
     <form method="POST" action="/logout"><button type="submit">Sign out</button></form>
   </div>

@@ -18,6 +18,7 @@ type DeadManSwitch struct {
 	sessions   *sessionManager // nil in federation mode
 	challenges *challengeStore // nil in federation mode
 	registry   *Registry       // nil in legacy mode
+	invites    *InviteCodes    // nil in legacy mode
 	startedAt  time.Time
 
 	// testAction is the per-pubkey cooldown gate for /admin/config/test-action;
@@ -189,6 +190,29 @@ func (d *DeadManSwitch) runFederation(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("federation: whitelist: %w", err)
 	}
+
+	// Auto-enroll the configured admin npub as plan=admin so it always has
+	// a roster UI, before the registry's first ReloadWhitelist picks it up.
+	if host.AdminPubkeyHex != "" {
+		adminNpub, err := formatNpub(host.AdminPubkeyHex)
+		if err != nil {
+			return fmt.Errorf("federation: admin npub: %w", err)
+		}
+		if !wl.Contains(adminNpub) {
+			if err := wl.Add(adminNpub, "admin (auto)"); err != nil {
+				return fmt.Errorf("federation: adding admin npub: %w", err)
+			}
+		}
+		if err := wl.SetPlanKind(adminNpub, "admin"); err != nil {
+			return fmt.Errorf("federation: tagging admin npub: %w", err)
+		}
+	}
+
+	invites, err := LoadInviteCodes(host.StateDir, host.InviteCodes)
+	if err != nil {
+		return fmt.Errorf("federation: invite codes: %w", err)
+	}
+	d.invites = invites
 
 	if err := Migrate(d.cfg, store, wl, sealer); err != nil {
 		return fmt.Errorf("federation: migrate: %w", err)
