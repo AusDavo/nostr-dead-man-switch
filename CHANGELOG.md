@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] — 2026-06-01
+
+Visual release. The web UI is rebranded from a dark dashboard to a light
+"document" aesthetic. No behavior, config, or API changes.
+
+### Changed
+
+- **New look across every page.** The status page, admin hub, login,
+  roster, config editor, watcher setup, and signup pages move from the
+  dark amber-on-graphite theme to a light certificate/statement design:
+  near-neutral paper, near-black ink, an oxblood accent, serif display
+  figures, and monospace for npubs, relays, timers, and other protocol
+  values. Status now reads as a stamp (the triggered state is a red stamp
+  on the sheet).
+- Layout uses hairline rules and dotted-leader rows in place of cards.
+- Replaced the side-stripe alert blocks with full borders. The roster
+  reads as a register, and its tables scroll horizontally on narrow
+  screens rather than breaking the layout.
+- Timer figures collapse to a single column on phone-width screens.
+
+### Accessibility
+
+- All text meets WCAG AA contrast (body around 6.6:1, status colors at or
+  above 5.3:1), and status is conveyed by a labeled stamp, not color
+  alone.
+
+[0.2.3]: https://github.com/AusDavo/nostr-dead-man-switch/releases/tag/v0.2.3
+
 ## [0.2.2] — 2026-05-31
 
 Patch release. Fixes for the v0.2 invite flow.
