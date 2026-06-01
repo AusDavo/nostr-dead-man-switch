@@ -439,7 +439,10 @@ func TestLoginVerify_HonorsAndSanitizesNext(t *testing.T) {
 		resp.Body.Close()
 		signed := signChallenge(t, sk, cr.Challenge)
 		body, _ := json.Marshal(map[string]any{"signedEvent": json.RawMessage(signed), "next": next})
-		resp, _ = client.Post(srv.URL+"/login/verify", "application/json", bytes.NewReader(body))
+		resp, err := client.Post(srv.URL+"/login/verify", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("verify post: %v", err)
+		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			b, _ := io.ReadAll(resp.Body)
