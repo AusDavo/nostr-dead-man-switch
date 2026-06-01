@@ -49,6 +49,24 @@ Monitor npub across relays
     └─────────────┘
 ```
 
+### What counts as activity
+
+The switch only sees events **signed by the watched key and published to a relay it monitors**. The timer resets on:
+
+- notes (kind 1)
+- reactions / likes (kind 7)
+- reposts (kind 6)
+- profile edits (kind 0) and relay-list updates (kind 10002)
+- in general, any event authored by the watched key
+
+What does **not** reset the timer, despite feeling like "using Nostr":
+
+- **Zaps.** A zap receipt (kind 9735) is authored by the *recipient's* Lightning/LNURL server, not by you; the zap request you sign (kind 9734) is sent to that server, never published to relays. So zapping — from any wallet — is invisible to the switch whether it succeeds or fails.
+- **Reading, scrolling, or logging in** — these create no events at all.
+- **Receiving DMs** — those events are authored by the sender, not you.
+
+Two practical consequences: stay alive by *posting* something occasionally (a like is enough), not by zapping; and make sure the configured relays include the ones your client actually publishes to, or the switch won't see your activity.
+
 ## Quick start
 
 ### Docker (recommended)
