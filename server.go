@@ -733,7 +733,7 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
   .relay-row { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.5rem; }
   .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .relay-url { font-size: 0.8rem; color: var(--ink); font-family: var(--font-mono); }
-  @media (max-width: 420px) { .stat-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 480px) { .stat-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>

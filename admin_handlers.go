@@ -676,6 +676,7 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
   .relay-url { font-size: 0.8rem; color: var(--ink); font-family: var(--font-mono); }
   .note-detail { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.5; }
   .note-detail code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; }
+  @media (max-width: 480px) { .stat-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>

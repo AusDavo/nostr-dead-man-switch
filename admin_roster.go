@@ -249,7 +249,8 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
 <style>` + baseCSS + `
   .container { max-width: 760px; }
   h1 { justify-content: space-between; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  .tbl { overflow-x: auto; }
+  table { width: 100%; min-width: 460px; border-collapse: collapse; font-size: var(--text-sm); }
   th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--rule); }
   th { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); font-weight: 500; }
   td.npub, td.code { font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; }
@@ -294,7 +295,7 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   <div class="card">
     <div class="card-title">Enrolled users ({{len .Rows}})</div>
     {{if .Rows}}
-    <table>
+    <div class="tbl"><table>
       <thead><tr><th>npub</th><th>plan</th><th>added</th><th>state</th><th>last seen</th><th></th></tr></thead>
       <tbody>
       {{range .Rows}}
@@ -314,7 +315,7 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
       </tr>
       {{end}}
       </tbody>
-    </table>
+    </table></div>
     {{else}}
     <div class="empty">No users enrolled.</div>
     {{end}}
@@ -338,7 +339,7 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
       <button type="submit" class="primary">Mint new code</button>
     </form>
     {{if .Codes}}
-    <table>
+    <div class="tbl"><table>
       <thead><tr><th>code</th><th>source</th><th>state</th><th>redeemed by</th><th></th></tr></thead>
       <tbody>
       {{range .Codes}}
@@ -362,7 +363,7 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
       </tr>
       {{end}}
       </tbody>
-    </table>
+    </table></div>
     {{else}}
     <div class="empty">No invite codes yet.</div>
     {{end}}
