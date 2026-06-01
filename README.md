@@ -299,15 +299,29 @@ Set `listen_addr: ":8080"` to enable the dashboard. Three surfaces:
 
 ![Per-user config form](docs/screenshots/admin-config.png)
 
-Run `./nostr-deadman --reset-session` to rotate the session secret and invalidate all logins.
+## Operations
 
-A `/health` JSON endpoint is also available for monitoring:
+### Health check (`/health`)
+
+Use `/health` for external monitors (Uptime Kuma, Healthchecks.io, etc.). Legacy mode returns per-watcher status:
 
 ```json
 {"version":"v0.1.0","status":"healthy","last_seen":"2026-04-11T12:00:00Z","silence_seconds":3600,"warnings_sent":0,"triggered":false}
 ```
 
 In federation mode `/health` reports aggregate state instead: `{"version":"v0.1.0","mode":"federation","watchers":3}`.
+
+### Rotate dashboard sessions (`--reset-session`)
+
+Run `./nostr-deadman --reset-session` when you suspect a session secret leak. This rotates the session secret and invalidates all dashboard logins.
+
+### Version (`--version`)
+
+Run `./nostr-deadman --version` when filing bug reports so support can match your binary to a release.
+
+### Bot key generation
+
+See [Generate a bot key](#generate-a-bot-key) below for `--generate-key` and federation watcher setup.
 
 ## State and re-arming
 
