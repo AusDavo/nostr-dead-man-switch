@@ -332,6 +332,23 @@ The state file tracks:
 - Number of warnings sent
 - Whether the switch has triggered
 
+### Backup checklist (`/data`)
+
+When running with Docker or a persistent volume mounted at `/data`, back up these paths before upgrades or host migration:
+
+| Path | Purpose |
+| --- | --- |
+| `state.json` | Last-seen timestamp and warning counters (legacy mode) |
+| `config.json` | Host config snapshot |
+| `whitelist.json` | Enrolled npubs (federation mode) |
+| `users/<npub>/config.json` | Per-tenant config |
+| `users/<npub>/state.json` | Per-tenant timer state |
+| `users/<npub>/watcher.nsec.enc` | Sealed watcher nsec (**loss = lost identity**) |
+| `session_secret` | Dashboard session HMAC key |
+| `config_dm_cache.json` | Self-DM idempotency cache (federation mode) |
+
+Restore backups only with the same `DEADMAN_WATCHER_KEY` used when the sealed nsecs were written; otherwise encrypted watcher keys cannot be recovered.
+
 ## Generate a bot key
 
 In legacy single-user mode, use the CLI:
