@@ -250,18 +250,18 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   .container { max-width: 760px; }
   h1 { justify-content: space-between; }
   table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-  th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--border); }
-  th { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+  th, td { text-align: left; padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); font-weight: 500; }
   td.npub, td.code { font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; }
-  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 9999px; font-size: var(--text-xs); border: 1px solid var(--border); }
-  .pill.run { color: var(--green); border-color: rgba(111,168,106,0.4); }
+  .pill { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 2px; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--rule); }
+  .pill.run { color: var(--green); border-color: rgba(47,107,58,0.4); }
   .pill.stop { color: var(--muted); }
   .pill.redeemed { color: var(--muted); }
-  .pill.revoked { color: var(--red); border-color: rgba(210,104,94,0.4); }
-  .pill.available { color: var(--green); border-color: rgba(111,168,106,0.4); }
+  .pill.revoked { color: var(--red); border-color: rgba(156,36,28,0.4); }
+  .pill.available { color: var(--green); border-color: rgba(47,107,58,0.4); }
   .muted { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
-  .flash { background: rgba(214,164,65,0.08); border: 1px solid rgba(214,164,65,0.4); color: var(--yellow); padding: 0.6rem 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-bottom: 1rem; }
-  .newcode { background: rgba(111,168,106,0.08); border: 1px solid rgba(111,168,106,0.4); color: var(--text); padding: 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; }
+  .flash { background: rgba(138,90,18,0.08); border: 1px solid rgba(138,90,18,0.4); color: var(--yellow); padding: 0.6rem 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-bottom: 1rem; }
+  .newcode { background: rgba(47,107,58,0.08); border: 1px solid rgba(47,107,58,0.4); color: var(--text); padding: 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; }
   .newcode code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--accent); user-select: all; }
   .share-row { display: flex; gap: 0.5rem; align-items: stretch; margin-top: 0.5rem; }
   .share-row input { flex: 1; font-family: var(--font-mono); font-size: var(--text-xs); }
@@ -269,8 +269,8 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   form.inline input[type=text] { flex: 1; }
   button.primary { padding: 0.5rem 0.85rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
   button.primary:hover { filter: brightness(1.05); }
-  button.danger { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(210,104,94,0.4); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
-  button.danger:hover { background: rgba(210,104,94,0.08); }
+  button.danger { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
+  button.danger:hover { background: rgba(156,36,28,0.08); }
   button.ghost { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--accent); border: 1px solid var(--accent); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
   button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
   .empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }

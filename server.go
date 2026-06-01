@@ -715,25 +715,31 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
 ` + sharedHead + `
 <title>Dead Man's Switch</title>
 <style>` + baseCSS + `
-  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  .stat-label { font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.125rem; }
-  .stat-value { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat-value.large { font-size: var(--text-2xl); letter-spacing: -0.01em; }
-  .progress-track { height: 6px; background: var(--border); border-radius: 3px; margin-top: 0.75rem; overflow: hidden; }
-  .progress-bar { height: 100%; border-radius: 3px; transition: width 1s ease-out; }
+  .masthead-title { display: flex; flex-direction: column; gap: 0.35rem; }
+  .masthead-title small { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 400; letter-spacing: 0.04em; color: var(--ink-muted); text-transform: uppercase; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  .stat-label { font-size: 0.8rem; color: var(--ink-muted); margin-bottom: 0.2rem; }
+  .stat-value { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat-value.large { font-size: 2.4rem; letter-spacing: -0.015em; line-height: 1; }
+  .progress-track { height: 4px; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 2px; margin-top: 1rem; overflow: hidden; }
+  .progress-bar { height: 100%; }
   .progress-healthy { background: var(--green); }
   .progress-warning { background: var(--yellow); }
   .progress-triggered { background: var(--red); }
-  .meta { font-size: var(--text-xs); color: var(--muted); display: flex; justify-content: space-between; margin-top: 0.5rem; }
-  .relay-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.375rem; }
+  .row { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.9rem; margin-top: 0.85rem; }
+  .row .k { color: var(--ink-muted); }
+  .row .leader { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-0.25rem); }
+  .row .v { font-family: var(--font-mono); font-size: 0.82rem; }
+  .relay-row { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.5rem; }
   .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .relay-url { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
+  .relay-url { font-size: 0.8rem; color: var(--ink); font-family: var(--font-mono); }
+  @media (max-width: 420px) { .stat-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>
-    Dead Man's Switch
+    <span class="masthead-title">Dead Man's Switch<small>proof of life · nostr</small></span>
     <span class="status-badge status-{{.Status}}">
       <span class="status-dot"></span>
       {{.StatusLabel}}
@@ -760,38 +766,34 @@ var statusTemplate = template.Must(template.New("status").Parse(`<!DOCTYPE html>
         <div class="stat-value large">{{.SilenceAge}}</div>
       </div>
       <div>
-        <div class="stat-label">Trigger in</div>
+        <div class="stat-label">Triggers in</div>
         <div class="stat-value large">{{.TimeRemaining}}</div>
       </div>
     </div>
     <div class="progress-track">
       <div class="progress-bar progress-{{.Status}}" style="width: {{.Progress}}%"></div>
     </div>
-    <div class="meta">
-      <span>Threshold: {{.Threshold}}</span>
-      <span>Warnings: {{.WarningsSent}}/{{.WarningsMax}}</span>
-    </div>
+    <div class="row"><span class="k">Silence threshold</span><span class="leader"></span><span class="v">{{.Threshold}}</span></div>
+    <div class="row"><span class="k">Warnings sent</span><span class="leader"></span><span class="v">{{.WarningsSent}} / {{.WarningsMax}}</span></div>
   </div>
 
   <div class="card">
     <div class="card-title">Activity</div>
-    <div class="stat-label">Last seen</div>
-    <div class="stat-value" style="margin-bottom:1rem">{{.LastSeen}}</div>
-    <div class="stat-label" style="margin-bottom:0.5rem">Relays</div>
+    <div class="row"><span class="k">Last signed event</span><span class="leader"></span><span class="v">{{.LastSeen}}</span></div>
+    <div class="stat-label" style="margin-top:1.2rem;margin-bottom:0.5rem">Relays watched</div>
     {{range .Relays}}
     <div class="relay-row">
-      <span class="relay-dot" style="background:{{if .Connected}}var(--green){{else}}var(--red){{end}};box-shadow:0 0 6px {{if .Connected}}var(--green){{else}}var(--red){{end}};"></span>
+      <span class="relay-dot" style="background:{{if .Connected}}var(--green){{else}}var(--red){{end}};"></span>
       <span class="relay-url">{{.URL}}</span>
     </div>
     {{end}}
   </div>
 
   {{if .Triggered}}
-  <div class="card" style="border-color: var(--red);">
+  <div class="card" style="border-bottom-color: var(--red);">
     <div class="card-title" style="color: var(--red);">Triggered</div>
-    <div class="stat-label">Activated at</div>
-    <div class="stat-value">{{.TriggeredAt}}</div>
-    <div class="meta"><span>Delete state file to re-arm</span></div>
+    <div class="row"><span class="k">Activated at</span><span class="leader"></span><span class="v">{{.TriggeredAt}}</span></div>
+    <div class="warn-detail" style="margin-top:0.6rem">Delete the state file to re-arm.</div>
   </div>
   {{end}}
 
@@ -811,17 +813,17 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <title>Sign in · Dead Man's Switch</title>
 <style>` + baseCSS + `
   body { align-items: center; }
-  .card { padding: 2rem; max-width: 420px; }
-  h1 { margin-bottom: 0.5rem; }
-  .subtitle { color: var(--muted); font-size: var(--text-sm); margin-bottom: 1.5rem; line-height: 1.5; }
-  button.primary { width: 100%; padding: 0.75rem 1rem; background: var(--accent); color: var(--accent-ink); border: none; border-radius: 0.4rem; font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
-  button.primary:hover { filter: brightness(1.05); }
+  .card { padding: 0; border: none; max-width: 440px; }
+  h1 { margin-bottom: 1rem; }
+  .subtitle { color: var(--ink-muted); font-size: var(--text-sm); margin-bottom: 1.5rem; line-height: 1.5; }
+  button.primary { width: 100%; padding: 0.75rem 1rem; background: var(--oxblood); color: var(--paper); border: 1px solid var(--oxblood); border-radius: 3px; font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
+  button.primary:hover { filter: brightness(1.1); }
   button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .hint { color: var(--muted); font-size: var(--text-xs); margin-top: 1rem; text-align: center; line-height: 1.5; }
-  .hint a { color: var(--accent); }
-  .error { background: rgba(210,104,94,0.08); border: 1px solid rgba(210,104,94,0.4); color: var(--red); padding: 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-top: 1rem; display: none; }
+  .hint { color: var(--ink-muted); font-size: var(--text-xs); margin-top: 1rem; text-align: center; line-height: 1.5; }
+  .error { background: rgba(156,36,28,0.07); border: 1px solid rgba(156,36,28,0.4); color: var(--red); padding: 0.75rem; border-radius: 3px; font-size: var(--text-sm); margin-top: 1rem; display: none; }
   .error.show { display: block; }
-  .back { display: block; text-align: center; color: var(--muted); font-size: var(--text-xs); margin-top: 1rem; text-decoration: none; }
+  .back { display: block; text-align: center; color: var(--ink-muted); font-size: var(--text-xs); margin-top: 1.4rem; text-decoration: none; }
+  .back:hover { color: var(--oxblood); }
 </style>
 </head>
 <body>
@@ -874,9 +876,9 @@ var adminLegacyTemplate = template.Must(template.New("adminLegacy").Parse(`<!DOC
 ` + sharedHead + `
 <title>Admin · Dead Man's Switch</title>
 <style>` + baseCSS + `
-  .label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+  .label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); margin-bottom: 0.5rem; }
   .value { font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; }
-  .muted { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
+  .muted { color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -905,12 +907,12 @@ var federationStatusTemplate = template.Must(template.New("federationStatus").Pa
 <style>` + baseCSS + `
   .stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 0.75rem; }
   .stat { text-align: center; }
-  .stat-label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.35rem; }
-  .stat-value { font-size: var(--text-2xl); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat-label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); margin-bottom: 0.4rem; }
+  .stat-value { font-family: var(--font-serif); font-size: 2.4rem; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -0.015em; line-height: 1; }
   .stat.armed .stat-value { color: var(--green); }
   .stat.warning .stat-value { color: var(--yellow); }
   .stat.triggered .stat-value { color: var(--red); }
-  .empty { color: var(--muted); font-style: italic; text-align: center; padding: 0.5rem 0; }
+  .empty { color: var(--ink-muted); font-style: italic; text-align: center; padding: 0.5rem 0; }
 </style>
 </head>
 <body>

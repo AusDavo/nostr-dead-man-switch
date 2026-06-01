@@ -5,3 +5,6 @@ state.json
 session_secret
 .env
 *.exe
+
+# Impeccable design skill (local tooling)
+.claude/

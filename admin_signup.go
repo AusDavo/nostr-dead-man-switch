@@ -112,10 +112,10 @@ var signupClosedTemplate = template.Must(template.New("signupClosed").Parse(`<!D
   body { align-items: center; }
   .container { max-width: 480px; }
   h1 { margin-bottom: 0.5rem; }
-  .lead { color: var(--muted); font-size: var(--text-sm); line-height: 1.6; margin-bottom: 1.25rem; }
-  .label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
-  .npub-box { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.7rem; user-select: all; }
-  .hint { color: var(--muted); font-size: var(--text-xs); margin-top: 0.75rem; line-height: 1.5; }
+  .lead { color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.6; margin-bottom: 1.25rem; }
+  .label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-muted); margin-bottom: 0.5rem; }
+  .npub-box { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink); word-break: break-all; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 0.7rem; user-select: all; }
+  .hint { color: var(--ink-muted); font-size: var(--text-xs); margin-top: 0.75rem; line-height: 1.5; }
 </style>
 </head>
 <body>

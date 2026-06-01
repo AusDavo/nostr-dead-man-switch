@@ -658,20 +658,23 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
 <title>Admin · Dead Man's Switch</title>
 <style>` + baseCSS + `
   h1 .npub { margin-left: auto; }
-  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  .stat-label { font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.125rem; }
-  .stat-value { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat-value.large { font-size: var(--text-2xl); letter-spacing: -0.01em; }
-  .progress-track { height: 6px; background: var(--border); border-radius: 3px; margin-top: 0.75rem; overflow: hidden; }
-  .progress-bar { height: 100%; border-radius: 3px; transition: width 1s ease-out; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  .stat-label { font-size: 0.8rem; color: var(--ink-muted); margin-bottom: 0.2rem; }
+  .stat-value { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat-value.large { font-size: 2.4rem; letter-spacing: -0.015em; line-height: 1; }
+  .progress-track { height: 4px; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 2px; margin-top: 1rem; overflow: hidden; }
+  .progress-bar { height: 100%; }
   .progress-healthy { background: var(--green); }
   .progress-warning { background: var(--yellow); }
   .progress-triggered { background: var(--red); }
-  .meta { font-size: var(--text-xs); color: var(--muted); display: flex; justify-content: space-between; margin-top: 0.5rem; }
-  .relay-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.375rem; }
+  .row { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.9rem; margin-top: 0.85rem; }
+  .row .k { color: var(--ink-muted); }
+  .row .leader { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-0.25rem); }
+  .row .v { font-family: var(--font-mono); font-size: 0.82rem; }
+  .relay-row { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.5rem; }
   .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .relay-url { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
-  .note-detail { font-size: var(--text-sm); color: var(--muted); line-height: 1.5; }
+  .relay-url { font-size: 0.8rem; color: var(--ink); font-family: var(--font-mono); }
+  .note-detail { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.5; }
   .note-detail code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; }
 </style>
 </head>
@@ -703,17 +706,15 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
         <div class="stat-value large">{{.SilenceAge}}</div>
       </div>
       <div>
-        <div class="stat-label">Trigger in</div>
+        <div class="stat-label">Triggers in</div>
         <div class="stat-value large">{{.TimeRemaining}}</div>
       </div>
     </div>
     <div class="progress-track"><div class="progress-bar progress-{{.Status}}" style="width: {{.Progress}}%"></div></div>
-    <div class="meta">
-      <span>Threshold: {{.Threshold}}</span>
-      <span>Warnings: {{.WarningsSent}}/{{.WarningsMax}}</span>
-    </div>
+    <div class="row"><span class="k">Silence threshold</span><span class="leader"></span><span class="v">{{.Threshold}}</span></div>
+    <div class="row"><span class="k">Warnings sent</span><span class="leader"></span><span class="v">{{.WarningsSent}} / {{.WarningsMax}}</span></div>
     {{if not .Triggered}}
-    <form method="POST" action="/admin/check-in" style="margin-top:0.75rem">
+    <form method="POST" action="/admin/check-in" style="margin-top:1rem">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <button type="submit" class="btn">Check in now</button>
     </form>
@@ -722,23 +723,21 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
 
   <div class="card">
     <div class="card-title">Activity</div>
-    <div class="stat-label">Last seen</div>
-    <div class="stat-value" style="margin-bottom:1rem">{{.LastSeen}}</div>
-    <div class="stat-label" style="margin-bottom:0.5rem">Relays</div>
+    <div class="row"><span class="k">Last signed event</span><span class="leader"></span><span class="v">{{.LastSeen}}</span></div>
+    <div class="stat-label" style="margin-top:1.2rem;margin-bottom:0.5rem">Relays watched</div>
     {{range .Relays}}
     <div class="relay-row">
-      <span class="relay-dot" style="background:{{if .Connected}}var(--green){{else}}var(--red){{end}};box-shadow:0 0 6px {{if .Connected}}var(--green){{else}}var(--red){{end}};"></span>
+      <span class="relay-dot" style="background:{{if .Connected}}var(--green){{else}}var(--red){{end}};"></span>
       <span class="relay-url">{{.URL}}</span>
     </div>
     {{end}}
   </div>
 
   {{if .Triggered}}
-  <div class="card" style="border-color: var(--red);">
+  <div class="card" style="border-bottom-color: var(--red);">
     <div class="card-title" style="color: var(--red);">Triggered</div>
-    <div class="stat-label">Activated at</div>
-    <div class="stat-value">{{.TriggeredAt}}</div>
-    <div class="meta" style="margin-bottom:0.75rem;"><span>Re-arming clears the triggered state and resumes monitoring. The actions that already fired stay fired.</span></div>
+    <div class="row"><span class="k">Activated at</span><span class="leader"></span><span class="v">{{.TriggeredAt}}</span></div>
+    <div class="note-detail" style="margin:0.6rem 0 0.85rem;">Re-arming clears the triggered state and resumes monitoring. The actions that already fired stay fired.</div>
     <form method="POST" action="/admin/rearm" onsubmit="return confirm('Re-arm this switch? Monitoring will resume from now.');">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <button type="submit" class="btn">Re-arm switch</button>
@@ -789,10 +788,10 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
   button.ghost { padding: 0.55rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
   button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
   button.ghost:disabled { opacity: 0.55; cursor: progress; }
-  .alert-danger { background: rgba(210,104,94,0.08); border-left: 3px solid var(--red); color: var(--red); padding: 0.75rem 1rem; border-radius: 0 0.25rem 0.25rem 0; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.5; }
-  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.6rem; user-select: all; }
+  .alert-danger { background: rgba(156,36,28,0.07); border: 1px solid rgba(156,36,28,0.45); color: var(--red); padding: 0.75rem 1rem; border-radius: 3px; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.5; }
+  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; background: var(--paper-2); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.6rem; user-select: all; }
   .reveal-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
-  pre.secret { background: var(--bg); border: 1px solid var(--red); border-radius: 0.4rem; padding: 0.75rem; margin-top: 0.75rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; white-space: pre-wrap; user-select: all; color: var(--text); display: none; }
+  pre.secret { background: var(--paper-2); border: 1px solid var(--red); border-radius: 0.4rem; padding: 0.75rem; margin-top: 0.75rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; white-space: pre-wrap; user-select: all; color: var(--text); display: none; }
   pre.secret.shown { display: block; }
   .reveal-err { color: var(--red); font-size: var(--text-xs); margin-top: 0.5rem; display: none; }
   .reveal-err.shown { display: block; }
@@ -953,8 +952,8 @@ var watcherGeneratedTemplate = template.Must(template.New("watcherGenerated").Pa
 <style>` + baseCSS + `
   .container { max-width: 640px; }
   h1 { margin-bottom: 0.35rem; }
-  .alert-danger { background: rgba(210,104,94,0.08); border-left: 3px solid var(--red); color: var(--red); padding: 0.9rem 1rem; border-radius: 0 0.25rem 0.25rem 0; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.55; }
-  pre.secret { background: var(--bg); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; white-space: pre-wrap; user-select: all; }
+  .alert-danger { background: rgba(156,36,28,0.07); border: 1px solid rgba(156,36,28,0.45); color: var(--red); padding: 0.9rem 1rem; border-radius: 3px; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.55; }
+  pre.secret { background: var(--paper-2); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; white-space: pre-wrap; user-select: all; }
   .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); word-break: break-all; }
   button.copy { margin-top: 0.75rem; padding: 0.5rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
   button.copy:hover { background: var(--accent); color: var(--accent-ink); }
@@ -1195,16 +1194,16 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   button.primary:hover { filter: brightness(1.05); }
   button.secondary { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--text); border: 1px solid var(--border); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; transition: border-color 120ms ease-out, color 120ms ease-out; }
   button.secondary:hover { border-color: var(--accent); color: var(--accent); }
-  button.danger { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(210,104,94,0.4); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; }
-  button.danger:hover { background: rgba(210,104,94,0.08); }
+  button.danger { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; }
+  button.danger:hover { background: rgba(156,36,28,0.08); }
   .action { border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; margin-bottom: 0.75rem; }
   .action-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
   .action-head .action-index { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .action-head .spacer { flex: 1; }
   .type-fields { display: none; }
   .msg { font-size: var(--text-sm); padding: 0.6rem 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; display: none; white-space: pre-wrap; }
-  .msg.err { display: block; background: rgba(210,104,94,0.08); border: 1px solid rgba(210,104,94,0.4); color: var(--red); }
-  .msg.ok { display: block; background: rgba(111,168,106,0.08); border: 1px solid rgba(111,168,106,0.4); color: var(--green); }
+  .msg.err { display: block; background: rgba(156,36,28,0.08); border: 1px solid rgba(156,36,28,0.4); color: var(--red); }
+  .msg.ok { display: block; background: rgba(47,107,58,0.08); border: 1px solid rgba(47,107,58,0.4); color: var(--green); }
   .card-actions { display: flex; gap: 0.5rem; align-items: center; }
   .dur { display: flex; gap: 0.4rem; align-items: stretch; }
   .dur .dur-n { flex: 1; min-width: 0; }
