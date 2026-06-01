@@ -158,6 +158,19 @@ One action per recipient. Duplicate the block for each person (spouse, lawyer, e
       — Sent automatically by nostr-dead-man-switch
 ```
 
+#### Tor and SMTP (Start9 / Tor-only hosts)
+
+Start9 and similar appliances route outbound traffic through Tor by default. Many public SMTP providers block Tor exit nodes, so email actions may fail silently when the switch triggers.
+
+| Provider / setup | Over Tor |
+| --- | --- |
+| Fastmail (app password) | Usually works |
+| Self-hosted Postfix on your LAN | Works if the relay does not block Tor |
+| Proton Mail via [Proton Bridge](https://proton.me/mail/bridge) on the same host | Works (SMTP to `127.0.0.1`) |
+| Gmail, Outlook | Typically **blocked** from Tor exits |
+
+Use the per-action **Test** button in the dashboard before you rely on email in production. If tests fail only on a Tor-routed host, switch provider or run the bot on a host with direct SMTP egress.
+
 ### ntfy push notification
 
 ```yaml
