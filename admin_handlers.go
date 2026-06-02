@@ -675,7 +675,7 @@ var adminHubTemplate = template.Must(template.New("adminHub").Parse(`<!DOCTYPE h
   .relay-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .relay-url { font-size: 0.8rem; color: var(--ink); font-family: var(--font-mono); }
   .note-detail { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.5; }
-  .note-detail code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; }
+  .note-detail code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink); word-break: break-all; }
   @media (max-width: 480px) { .stat-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -778,21 +778,20 @@ var watcherSetupTemplate = template.Must(template.New("watcherSetup").Parse(`<!D
 <style>` + baseCSS + `
   .container { max-width: 640px; }
   h1 { justify-content: space-between; margin-bottom: 0.35rem; }
-  .lead { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 1.5rem; }
-  .card-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); text-transform: none; letter-spacing: normal; margin-bottom: 0.5rem; }
-  .muted { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 0.75rem; }
-  label.consent { display: flex; gap: 0.5rem; align-items: flex-start; font-size: var(--text-xs); color: var(--muted); margin: 0.75rem 0; line-height: 1.4; }
+  .lead { color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 1.5rem; }
+  .muted { color: var(--ink-muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: 0.75rem; }
+  label.consent { display: flex; gap: 0.5rem; align-items: flex-start; font-size: var(--text-xs); color: var(--ink-muted); margin: 0.75rem 0; line-height: 1.4; }
   label.consent input { margin-top: 0.2rem; }
   textarea { width: 100%; min-height: 96px; }
-  button.primary { padding: 0.6rem 1rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; width: 100%; }
+  button.primary { padding: 0.6rem 1rem; border-radius: 3px; border: 1px solid var(--oxblood); background: var(--oxblood); color: var(--paper); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; width: 100%; }
   button.primary:hover { filter: brightness(1.05); }
-  button.ghost { padding: 0.55rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
-  button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
+  button.ghost { padding: 0.55rem 0.9rem; border-radius: 3px; border: 1px solid var(--oxblood); background: transparent; color: var(--oxblood); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
+  button.ghost:hover { background: var(--oxblood); color: var(--paper); }
   button.ghost:disabled { opacity: 0.55; cursor: progress; }
   .alert-danger { background: rgba(156,36,28,0.07); border: 1px solid rgba(156,36,28,0.45); color: var(--red); padding: 0.75rem 1rem; border-radius: 3px; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.5; }
-  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; background: var(--paper-2); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.6rem; user-select: all; }
+  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink); word-break: break-all; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 0.6rem; user-select: all; }
   .reveal-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
-  pre.secret { background: var(--paper-2); border: 1px solid var(--red); border-radius: 0.4rem; padding: 0.75rem; margin-top: 0.75rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; white-space: pre-wrap; user-select: all; color: var(--text); display: none; }
+  pre.secret { background: var(--paper-2); border: 1px solid var(--red); border-radius: 3px; padding: 0.75rem; margin-top: 0.75rem; font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; white-space: pre-wrap; user-select: all; color: var(--ink); display: none; }
   pre.secret.shown { display: block; }
   .reveal-err { color: var(--red); font-size: var(--text-xs); margin-top: 0.5rem; display: none; }
   .reveal-err.shown { display: block; }
@@ -954,11 +953,11 @@ var watcherGeneratedTemplate = template.Must(template.New("watcherGenerated").Pa
   .container { max-width: 640px; }
   h1 { margin-bottom: 0.35rem; }
   .alert-danger { background: rgba(156,36,28,0.07); border: 1px solid rgba(156,36,28,0.45); color: var(--red); padding: 0.9rem 1rem; border-radius: 3px; font-size: var(--text-sm); margin-bottom: 1.25rem; line-height: 1.55; }
-  pre.secret { background: var(--paper-2); border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; white-space: pre-wrap; user-select: all; }
-  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); word-break: break-all; }
-  button.copy { margin-top: 0.75rem; padding: 0.5rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
-  button.copy:hover { background: var(--accent); color: var(--accent-ink); }
-  a.primary { padding: 0.7rem 1rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 600; display: block; }
+  pre.secret { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 0.9rem; font-family: var(--font-mono); font-size: var(--text-sm); word-break: break-all; white-space: pre-wrap; user-select: all; }
+  .pub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-muted); word-break: break-all; }
+  button.copy { margin-top: 0.75rem; padding: 0.5rem 0.9rem; border-radius: 3px; border: 1px solid var(--oxblood); background: transparent; color: var(--oxblood); font-size: var(--text-sm); cursor: pointer; font-family: inherit; }
+  button.copy:hover { background: var(--oxblood); color: var(--paper); }
+  a.primary { padding: 0.7rem 1rem; border-radius: 3px; border: 1px solid var(--oxblood); background: var(--oxblood); color: var(--paper); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 600; display: block; }
   a.primary:hover { filter: brightness(1.05); }
 </style>
 </head>
@@ -1186,23 +1185,24 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   .container { max-width: 720px; }
   h1 { justify-content: space-between; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-  label { display: block; font-size: var(--text-xs); color: var(--muted); margin-bottom: 0.75rem; }
+  label { display: block; font-size: var(--text-xs); color: var(--ink-muted); margin-bottom: 0.75rem; }
   label span.k { display: block; margin-bottom: 0.25rem; }
   input, textarea, select { width: 100%; }
   textarea { min-height: 80px; }
-  .muted { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
-  button.primary { padding: 0.55rem 0.9rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
+  .muted { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
+  button.primary { padding: 0.55rem 0.9rem; border-radius: 3px; border: 1px solid var(--oxblood); background: var(--oxblood); color: var(--paper); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
   button.primary:hover { filter: brightness(1.05); }
-  button.secondary { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--text); border: 1px solid var(--border); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; transition: border-color 120ms ease-out, color 120ms ease-out; }
-  button.secondary:hover { border-color: var(--accent); color: var(--accent); }
-  button.danger { padding: 0.55rem 0.9rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; }
+  button.secondary { padding: 0.55rem 0.9rem; border-radius: 3px; background: transparent; color: var(--ink); border: 1px solid var(--rule); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; transition: border-color 120ms ease-out, color 120ms ease-out; }
+  button.secondary:hover { border-color: var(--oxblood); color: var(--oxblood); }
+  button.danger { padding: 0.55rem 0.9rem; border-radius: 3px; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; }
   button.danger:hover { background: rgba(156,36,28,0.08); }
-  .action { border: 1px solid var(--border); border-radius: 0.4rem; padding: 0.9rem; margin-bottom: 0.75rem; }
-  .action-head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
-  .action-head .action-index { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .action { border: 1px solid var(--rule); border-radius: 3px; padding: 0.9rem; margin-bottom: 0.75rem; }
+  .action-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-bottom: 0.75rem; }
+  .action-head .action-type { flex: 1; min-width: 9rem; }
+  .action-head .action-index { font-size: var(--text-xs); color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .action-head .spacer { flex: 1; }
   .type-fields { display: none; }
-  .msg { font-size: var(--text-sm); padding: 0.6rem 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; display: none; white-space: pre-wrap; }
+  .msg { font-size: var(--text-sm); padding: 0.6rem 0.75rem; border-radius: 3px; margin-bottom: 1rem; display: none; white-space: pre-wrap; }
   .msg.err { display: block; background: rgba(156,36,28,0.08); border: 1px solid rgba(156,36,28,0.4); color: var(--red); }
   .msg.ok { display: block; background: rgba(47,107,58,0.08); border: 1px solid rgba(47,107,58,0.4); color: var(--green); }
   .card-actions { display: flex; gap: 0.5rem; align-items: center; }
@@ -1210,17 +1210,21 @@ var adminConfigTemplate = template.Must(template.New("adminConfig").Parse(`<!DOC
   .dur .dur-n { flex: 1; min-width: 0; }
   .dur .dur-u { flex: 0 0 auto; width: auto; }
   .dur .dur-raw { flex: 1; }
-  .dur-toggle { background: none; border: none; color: var(--muted); font-size: var(--text-xs); cursor: pointer; padding: 0.2rem 0; margin-top: 0.15rem; font-family: inherit; }
-  .dur-toggle:hover { color: var(--accent); }
-  details { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem 1.25rem; margin-bottom: 1rem; }
-  details > summary { cursor: pointer; font-size: var(--text-sm); color: var(--muted); }
-  details[open] > summary { margin-bottom: 0.75rem; color: var(--text); }
+  .dur-toggle { background: none; border: none; color: var(--ink-muted); font-size: var(--text-xs); cursor: pointer; padding: 0.2rem 0; margin-top: 0.15rem; font-family: inherit; }
+  .dur-toggle:hover { color: var(--oxblood); }
+  details { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  details > summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-muted); }
+  details[open] > summary { margin-bottom: 0.75rem; color: var(--ink); }
   #raw-json { min-height: 280px; font-size: var(--text-xs); }
   .footer-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
   .footer-actions > * { flex: 1; }
   .footer-actions form { margin: 0; }
-  .footer-actions a, .footer-actions form button { width: 100%; padding: 0.6rem 0.75rem; border-radius: 0.4rem; border: 1px solid var(--border); background: transparent; color: var(--text); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; display: block; transition: border-color 120ms ease-out, color 120ms ease-out; }
-  .footer-actions a:hover, .footer-actions form button:hover { border-color: var(--accent); color: var(--accent); }
+  .footer-actions a, .footer-actions form button { width: 100%; padding: 0.6rem 0.75rem; border-radius: 3px; border: 1px solid var(--rule); background: transparent; color: var(--ink); text-decoration: none; text-align: center; font-size: var(--text-sm); font-weight: 500; cursor: pointer; font-family: inherit; display: block; transition: border-color 120ms ease-out, color 120ms ease-out; }
+  .footer-actions a:hover, .footer-actions form button:hover { border-color: var(--oxblood); color: var(--oxblood); }
+  @media (max-width: 560px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .footer-actions { flex-direction: column; }
+  }
 </style>
 </head>
 <body>
