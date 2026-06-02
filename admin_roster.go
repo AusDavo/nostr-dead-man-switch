@@ -256,26 +256,25 @@ var rosterTemplate = template.Must(template.New("roster").Parse(`<!DOCTYPE html>
   td.npub, td.code { font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-all; }
   .pill { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 2px; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--rule); }
   .pill.run { color: var(--green); border-color: rgba(47,107,58,0.4); }
-  .pill.stop { color: var(--muted); }
-  .pill.redeemed { color: var(--muted); }
+  .pill.stop { color: var(--ink-muted); }
+  .pill.redeemed { color: var(--ink-muted); }
   .pill.revoked { color: var(--red); border-color: rgba(156,36,28,0.4); }
   .pill.available { color: var(--green); border-color: rgba(47,107,58,0.4); }
-  .muted { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
-  .flash { background: rgba(138,90,18,0.08); border: 1px solid rgba(138,90,18,0.4); color: var(--yellow); padding: 0.6rem 0.75rem; border-radius: 0.4rem; font-size: var(--text-sm); margin-bottom: 1rem; }
-  .newcode { background: rgba(47,107,58,0.08); border: 1px solid rgba(47,107,58,0.4); color: var(--text); padding: 0.75rem; border-radius: 0.4rem; margin-bottom: 1rem; }
-  .newcode code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--accent); user-select: all; }
+  .muted { color: var(--ink-muted); font-size: var(--text-xs); line-height: 1.5; margin-bottom: 0.75rem; }
+  .flash { background: rgba(138,90,18,0.08); border: 1px solid rgba(138,90,18,0.4); color: var(--yellow); padding: 0.6rem 0.75rem; border-radius: 3px; font-size: var(--text-sm); margin-bottom: 1rem; }
+  .newcode { background: rgba(47,107,58,0.08); border: 1px solid rgba(47,107,58,0.4); color: var(--ink); padding: 0.75rem; border-radius: 3px; margin-bottom: 1rem; }
+  .newcode code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--oxblood); user-select: all; }
   .share-row { display: flex; gap: 0.5rem; align-items: stretch; margin-top: 0.5rem; }
   .share-row input { flex: 1; font-family: var(--font-mono); font-size: var(--text-xs); }
   form.inline { display: flex; gap: 0.5rem; align-items: center; margin: 0; }
   form.inline input[type=text] { flex: 1; }
-  button.primary { padding: 0.5rem 0.85rem; border-radius: 0.4rem; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
+  button.primary { padding: 0.5rem 0.85rem; border-radius: 3px; border: 1px solid var(--oxblood); background: var(--oxblood); color: var(--paper); font-size: var(--text-sm); font-weight: 600; cursor: pointer; font-family: inherit; }
   button.primary:hover { filter: brightness(1.05); }
-  button.danger { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
+  button.danger { padding: 0.35rem 0.6rem; border-radius: 3px; background: transparent; color: var(--red); border: 1px solid rgba(156,36,28,0.4); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
   button.danger:hover { background: rgba(156,36,28,0.08); }
-  button.ghost { padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: transparent; color: var(--accent); border: 1px solid var(--accent); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
-  button.ghost:hover { background: var(--accent); color: var(--accent-ink); }
-  .empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }
-  .card-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); text-transform: none; letter-spacing: normal; margin-bottom: 0.75rem; }
+  button.ghost { padding: 0.35rem 0.6rem; border-radius: 3px; background: transparent; color: var(--oxblood); border: 1px solid var(--oxblood); font-size: var(--text-xs); cursor: pointer; font-family: inherit; }
+  button.ghost:hover { background: var(--oxblood); color: var(--paper); }
+  .empty { color: var(--ink-muted); font-style: italic; padding: 0.5rem 0; }
 </style>
 </head>
 <body>

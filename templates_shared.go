@@ -15,13 +15,12 @@ const sharedHead = `<meta charset="utf-8">
 // Newsreader serif (display/figures), system sans (body), JetBrains Mono
 // (protocol values + structural labels). Layout: rules, not cards.
 //
-// NOTE ON TOKENS: the legacy names (--bg, --card, --text, --accent, --border,
-// --yellow ...) are retained and remapped to light values so the per-page
-// <style> blocks that still reference them resolve correctly. New semantic
-// names (--paper, --ink, --ink-muted, --rule, --oxblood) are the going-forward
-// vocabulary. Each template's <style> prepends this, then layers its own.
+// TOKENS: --paper / --paper-2 / --ink / --ink-muted / --rule / --oxblood are
+// the surface + ink + accent vocabulary; --green / --yellow / --red carry
+// semantic state (always paired with a text label, never color alone). Every
+// template's <style> prepends this, then layers its own.
 const baseCSS = `:root {
-  /* semantic (going-forward) */
+  /* surface, ink, accent */
   --paper: #f3f2ef;
   --paper-2: #eceae6;
   --ink: #19181a;
@@ -29,14 +28,7 @@ const baseCSS = `:root {
   --rule: #c9c6c0;
   --oxblood: #7a1f1a;
 
-  /* legacy aliases, remapped to light values */
-  --bg: #f3f2ef;
-  --card: #eceae6;
-  --border: #c9c6c0;
-  --text: #19181a;
-  --muted: #57555a;
-  --accent: #7a1f1a;
-  --accent-ink: #f3f2ef;
+  /* semantic state (darkened for light bg) */
   --green: #2f6b3a;
   --yellow: #8a5a12;
   --red: #9c241c;
