@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] — 2026-06-02
+
+Visual release. Completes the light "document" rebrand across the
+authenticated admin pages. No behavior, config, or API changes.
+
+### Changed
+
+- **Admin pages now match the document design.** The watcher setup,
+  generated-key, configuration, and roster pages move off the legacy
+  palette shim onto the document system: oxblood accent, monospace
+  section labels, and hairline rules in place of rounded cards — the same
+  vocabulary as the status page and public surfaces.
+- The configuration editor's field grid collapses to a single column on
+  phone-width screens; it previously overflowed the viewport.
+
+### Removed
+
+- Retired the now-unused legacy CSS token aliases (`--bg`, `--card`,
+  `--accent`, `--border`, `--text`, `--muted`, `--accent-ink`) from the
+  shared stylesheet. Only the paper/ink/oxblood and semantic-state tokens
+  remain.
+
 ## [0.2.3] — 2026-06-01
 
 Visual release. The web UI is rebranded from a dark dashboard to a light
