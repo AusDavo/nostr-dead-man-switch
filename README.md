@@ -231,8 +231,29 @@ Works with n8n, Zapier, Make, Home Assistant, custom APIs, etc.
     headers:
       Content-Type: "application/json"
       Authorization: "Bearer ${WEBHOOK_TOKEN}"
+    secret: "${WEBHOOK_SECRET}"   # optional — HMAC-signs the request (see below)
     body: '{"event":"triggered","source":"nostr-dead-man-switch"}'
 ```
+
+#### Verifying webhook signatures
+
+Without verification, anything that knows your endpoint URL can fake a trigger. If you set the optional `secret`, every request carries an `X-Deadman-Signature` header (same convention as GitHub webhooks):
+
+```
+X-Deadman-Signature: sha256=<hex of HMAC-SHA256(secret, request body)>
+```
+
+On the receiving side, recompute the HMAC over the **raw request body** and compare with a constant-time check. Python example:
+
+```python
+import hashlib, hmac
+
+def verify(secret: str, raw_body: bytes, header: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
+```
+
+In n8n, add a Crypto node (HMAC-SHA256 over the body with your secret) and an IF node comparing it against the header. Reject requests with a missing or mismatched signature.
 
 ### Nostr note (signed by bot)
 

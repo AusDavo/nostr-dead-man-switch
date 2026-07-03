@@ -2,6 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -28,6 +34,79 @@ func TestExecuteNostrDM_ValidationErrors(t *testing.T) {
 				t.Fatalf("err = %v, want substring %q", err, tc.wantSub)
 			}
 		})
+	}
+}
+
+func TestExecuteWebhook_HMACSigning(t *testing.T) {
+	body := `{"event":"triggered"}`
+	secret := "hunter2"
+
+	// Reference signature computed independently of signWebhookBody.
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	wantSig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	cases := []struct {
+		name    string
+		config  map[string]any
+		wantSig string
+	}{
+		{
+			"secret set signs body",
+			map[string]any{"body": body, "secret": secret},
+			wantSig,
+		},
+		{
+			"no secret sends no signature",
+			map[string]any{"body": body},
+			"",
+		},
+		{
+			"empty secret sends no signature",
+			map[string]any{"body": body, "secret": ""},
+			"",
+		},
+		{
+			"computed signature wins over headers entry",
+			map[string]any{
+				"body":    body,
+				"secret":  secret,
+				"headers": map[string]any{"X-Deadman-Signature": "sha256=forged"},
+			},
+			wantSig,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotSig string
+			var gotBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotSig = r.Header.Get("X-Deadman-Signature")
+				gotBody, _ = io.ReadAll(r.Body)
+			}))
+			defer srv.Close()
+
+			tc.config["url"] = srv.URL
+			if err := executeWebhook(context.Background(), tc.config); err != nil {
+				t.Fatalf("executeWebhook: %v", err)
+			}
+			if gotSig != tc.wantSig {
+				t.Errorf("X-Deadman-Signature = %q, want %q", gotSig, tc.wantSig)
+			}
+			if string(gotBody) != body {
+				t.Errorf("body = %q, want %q", gotBody, body)
+			}
+		})
+	}
+}
+
+func TestSignWebhookBody_EmptyBody(t *testing.T) {
+	// A GET-style webhook with no body must still produce a valid,
+	// verifiable signature over the empty string.
+	mac := hmac.New(sha256.New, []byte("s"))
+	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	if got := signWebhookBody("s", ""); got != want {
+		t.Errorf("signWebhookBody(s, \"\") = %q, want %q", got, want)
 	}
 }
 

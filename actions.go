@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -85,8 +88,9 @@ func executeWebhook(ctx context.Context, config map[string]any) error {
 		method = m
 	}
 
+	body := getString(config, "body")
 	var bodyReader io.Reader
-	if body := getString(config, "body"); body != "" {
+	if body != "" {
 		bodyReader = strings.NewReader(body)
 	}
 
@@ -101,6 +105,13 @@ func executeWebhook(ctx context.Context, config map[string]any) error {
 		}
 	}
 
+	// Optional HMAC signing so receivers can verify the request came from
+	// this switch. Set after user headers so a stray "headers:" entry can't
+	// shadow the computed signature.
+	if secret := getString(config, "secret"); secret != "" {
+		req.Header.Set("X-Deadman-Signature", signWebhookBody(secret, body))
+	}
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -113,6 +124,15 @@ func executeWebhook(ctx context.Context, config map[string]any) error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// signWebhookBody computes the X-Deadman-Signature header value for a
+// webhook body: "sha256=" + hex(HMAC-SHA256(secret, body)), matching
+// GitHub's webhook signature convention.
+func signWebhookBody(secret, body string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // resolveRelays picks the effective relay list for an outbound publish.
