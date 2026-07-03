@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] — 2026-07-03
+
+### Added
+
+- **Webhook HMAC signing.** The `webhook` action accepts an optional
+  `secret` field. When set, every request carries an
+  `X-Deadman-Signature: sha256=<hex of HMAC-SHA256(secret, body)>`
+  header (GitHub's webhook convention) so receivers — n8n, Home
+  Assistant, custom APIs — can verify a request genuinely came from
+  this switch and reject spoofed payloads. Absent `secret` leaves
+  requests unsigned, exactly as before. The README documents
+  receiver-side verification with a constant-time comparison example.
+  (#29, #44)
+
 ## [0.2.4] — 2026-06-02
 
 Visual release. Completes the light "document" rebrand across the

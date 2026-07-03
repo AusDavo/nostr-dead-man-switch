@@ -239,6 +239,8 @@ Works with n8n, Zapier, Make, Home Assistant, custom APIs, etc.
 
 Without verification, anything that knows your endpoint URL can fake a trigger. If you set the optional `secret`, every request carries an `X-Deadman-Signature` header (same convention as GitHub webhooks):
 
+> **Where the secret lives:** `${VAR}` expansion from `.env` applies to the host `config.yaml` (legacy single-switch mode). On federation deployments, per-user actions are edited in the dashboard's configuration page — paste the secret value there; it is stored per-user and masked in the UI like other secrets.
+
 ```
 X-Deadman-Signature: sha256=<hex of HMAC-SHA256(secret, request body)>
 ```
