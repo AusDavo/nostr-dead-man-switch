@@ -199,6 +199,11 @@ actions:
   # POST/GET/PUT to any URL. Use for n8n, Zapier, Make,
   # Home Assistant, custom APIs, etc.
   #
+  # Optional: set "secret" and every request carries
+  #   X-Deadman-Signature: sha256=<hex HMAC-SHA256(secret, body)>
+  # (GitHub webhook convention) so the receiver can verify the
+  # request really came from this switch. See README.
+  #
   # - type: webhook
   #   config:
   #     url: "https://your-service.example.com/api/deadman"
@@ -206,6 +211,7 @@ actions:
   #     headers:
   #       Content-Type: "application/json"
   #       Authorization: "Bearer ${WEBHOOK_TOKEN}"
+  #     secret: "${WEBHOOK_SECRET}"
   #     body: '{"event":"triggered","source":"nostr-dead-man-switch","message":"No activity for 30+ days"}'
 
   # ────────────────────────────────────────────────────────
