@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] — 2026-09-20
+
+Reliability release. No config, API, or behavior changes to the switch
+itself — only how it paces reconnects to relays that are misbehaving.
+
+### Changed
+
+- **Relay reconnects back off exponentially.** Both reconnect loops
+  previously retried on a flat timer: 30s after a failed connect, 5s
+  after a closed subscription, forever. A relay that is fully down costs
+  little that way, but a relay that *flaps* costs a fixed 120 attempts
+  an hour per subscriber goroutine and buries every other line in the
+  log. Through Sep 2026 `relay.damus.io` refused roughly half of all
+  websocket upgrades with a 503 while serving the other half, which on a
+  three-relay deployment produced 2,844 failed connects in 24h. Delays
+  now run 30s, 1m, 2m, 4m, 8m up to a 15m cap, each jittered ±25% so
+  relay goroutines that fail together do not retry in lockstep — 4
+  attempts an hour in steady state instead of 120, with no loss in how
+  quickly a recovered relay is picked up. The backoff resets only once a
+  subscription has stayed up for 60s, so a relay that accepts the
+  connection and immediately drops the subscription keeps backing off,
+  while a well-behaved relay's routine reconnect stays at 5s. One
+  behavior change beyond pacing: a self-DM *subscribe* failure now enters
+  the backoff at 30s rather than retrying after 5s, matching how connect
+  failures are treated. (#46)
+
 ## [0.2.5] — 2026-07-03
 
 ### Added
