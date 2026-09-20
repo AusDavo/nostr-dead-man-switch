@@ -132,8 +132,8 @@ func querySelfDMs(ctx context.Context, relays []string, watcherPubHex string,
 // subscribeSelfDMs starts one goroutine per relay that reconnects on
 // disconnect and pushes received events onto a single buffered channel.
 // Runs until ctx is Done; the returned channel is never closed. Mirrors
-// the reconnect cadence of Monitor.subscribeRelay (30s / 5s backoff)
-// with a filter specific to self-DMs.
+// the reconnect cadence of Monitor.subscribeRelay (jittered exponential
+// backoff, see backoff.go) with a filter specific to self-DMs.
 func subscribeSelfDMs(ctx context.Context, relays []string, watcherPubHex string,
 	since nostr.Timestamp) (selfDMInbox, error) {
 	out := make(chan *nostr.Event, 64)
@@ -145,6 +145,7 @@ func subscribeSelfDMs(ctx context.Context, relays []string, watcherPubHex string
 
 func subscribeSelfDMRelay(ctx context.Context, url string, watcherPubHex string,
 	since nostr.Timestamp, out chan<- *nostr.Event) {
+	b := newBackoff(relayBackoffMin, relayBackoffMax)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -152,14 +153,15 @@ func subscribeSelfDMRelay(ctx context.Context, url string, watcherPubHex string,
 		relay, err := nostr.RelayConnect(ctx, url)
 		if err != nil {
 			log.Printf("[selfdm] connect failed %s: %v", url, err)
-			sleepCtx(ctx, 30*time.Second)
+			sleepCtx(ctx, b.next())
 			continue
 		}
+		connectedAt := time.Now()
 		sub, err := relay.Subscribe(ctx, nostr.Filters{selfDMFilter(watcherPubHex, &since, 0)})
 		if err != nil {
 			log.Printf("[selfdm] subscribe failed %s: %v", url, err)
 			relay.Close()
-			sleepCtx(ctx, 5*time.Second)
+			sleepCtx(ctx, b.next())
 			continue
 		}
 		for ev := range sub.Events {
@@ -177,6 +179,11 @@ func subscribeSelfDMRelay(ctx context.Context, url string, watcherPubHex string,
 		}
 		log.Printf("[selfdm] sub closed on %s, reconnecting...", url)
 		relay.Close()
-		sleepCtx(ctx, 5*time.Second)
+		if time.Since(connectedAt) >= relayHealthyAfter {
+			b.reset()
+			sleepCtx(ctx, relayReconnectDelay)
+		} else {
+			sleepCtx(ctx, b.next())
+		}
 	}
 }
