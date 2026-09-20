@@ -69,6 +69,7 @@ func (m *Monitor) Start(ctx context.Context, since time.Time) {
 }
 
 func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Timestamp) {
+	b := newBackoff(relayBackoffMin, relayBackoffMax)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -78,12 +79,13 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		if err != nil {
 			log.Printf("[monitor] connect failed %s: %v", url, err)
 			m.setStatus(url, false, err.Error())
-			sleepCtx(ctx, 30*time.Second)
+			sleepCtx(ctx, b.next())
 			continue
 		}
 
 		log.Printf("[monitor] connected to %s", url)
 		m.setStatus(url, true, "")
+		connectedAt := time.Now()
 
 		filters := nostr.Filters{{
 			Authors: []string{m.subjectPubHex},
@@ -95,7 +97,7 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 			log.Printf("[monitor] subscribe failed %s: %v", url, err)
 			m.setStatus(url, false, err.Error())
 			relay.Close()
-			sleepCtx(ctx, 30*time.Second)
+			sleepCtx(ctx, b.next())
 			continue
 		}
 
@@ -113,7 +115,15 @@ func (m *Monitor) subscribeRelay(ctx context.Context, url string, since nostr.Ti
 		log.Printf("[monitor] subscription closed on %s, reconnecting...", url)
 		m.setStatus(url, false, "disconnected")
 		relay.Close()
-		sleepCtx(ctx, 5*time.Second)
+		// A subscription that stayed up is a working relay dropping us, so
+		// clear the backoff and reconnect promptly. One that died young is
+		// flapping; keep backing off rather than hammering it.
+		if time.Since(connectedAt) >= relayHealthyAfter {
+			b.reset()
+			sleepCtx(ctx, relayReconnectDelay)
+		} else {
+			sleepCtx(ctx, b.next())
+		}
 	}
 }
 
