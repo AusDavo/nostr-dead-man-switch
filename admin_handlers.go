@@ -119,7 +119,7 @@ func (d *DeadManSwitch) handleWatcherSetup(w http.ResponseWriter, r *http.Reques
 // watcher. The plaintext nsec is rendered inline exactly once and never
 // written to logs or session storage.
 func (d *DeadManSwitch) handleWatcherGenerate(w http.ResponseWriter, r *http.Request) {
-	_, npub, ok := d.requireFederationPost(w, r)
+	_, npub, ok := d.requireWhitelistedPost(w, r)
 	if !ok {
 		return
 	}
@@ -295,7 +295,7 @@ func (d *DeadManSwitch) handleWatcherReveal(w http.ResponseWriter, r *http.Reque
 // default UserConfig, and starts the watcher. On success redirects to
 // /admin.
 func (d *DeadManSwitch) handleWatcherImport(w http.ResponseWriter, r *http.Request) {
-	_, npub, ok := d.requireFederationPost(w, r)
+	_, npub, ok := d.requireWhitelistedPost(w, r)
 	if !ok {
 		return
 	}
@@ -345,7 +345,7 @@ func (d *DeadManSwitch) handleWatcherImport(w http.ResponseWriter, r *http.Reque
 // failure they bounce back to /admin/watcher, where the freshly-stashed
 // error renders inline.
 func (d *DeadManSwitch) handleWatcherRetryStart(w http.ResponseWriter, r *http.Request) {
-	_, npub, ok := d.requireFederationPost(w, r)
+	_, npub, ok := d.requireWhitelistedPost(w, r)
 	if !ok {
 		return
 	}
@@ -394,6 +394,26 @@ func (d *DeadManSwitch) requireFederationPost(w http.ResponseWriter, r *http.Req
 	npub, err := formatNpub(pubkey)
 	if err != nil {
 		http.Error(w, "bad session pubkey", http.StatusInternalServerError)
+		return "", "", false
+	}
+	return pubkey, npub, true
+}
+
+// requireWhitelistedPost layers the whitelist check on top of
+// requireFederationPost for the per-user watcher handlers (generate,
+// import, retry-start, check-in, rearm). The GET pages already redirect
+// non-whitelisted sessions to /admin/signup, so these POSTs normally only
+// arrive from whitelisted users. Checking here as well means a session
+// that isn't (or is no longer) whitelisted can't write a user dir, sealed
+// nsec or config before Registry.Start rejects it, and can't act on a
+// watcher left over from before a revoke.
+func (d *DeadManSwitch) requireWhitelistedPost(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	pubkey, npub, ok := d.requireFederationPost(w, r)
+	if !ok {
+		return "", "", false
+	}
+	if !d.registry.IsWhitelisted(npub) {
+		http.Redirect(w, r, "/admin/signup", http.StatusSeeOther)
 		return "", "", false
 	}
 	return pubkey, npub, true
@@ -572,7 +592,7 @@ func (d *DeadManSwitch) handleAdminFederation(w http.ResponseWriter, r *http.Req
 // LastSeen to now and clears pending warnings. Refused if the watcher
 // has already triggered.
 func (d *DeadManSwitch) handleAdminCheckIn(w http.ResponseWriter, r *http.Request) {
-	_, npub, ok := d.requireFederationPost(w, r)
+	_, npub, ok := d.requireWhitelistedPost(w, r)
 	if !ok {
 		return
 	}
@@ -589,14 +609,14 @@ func (d *DeadManSwitch) handleAdminCheckIn(w http.ResponseWriter, r *http.Reques
 }
 
 // handleAdminRearm clears a triggered watcher's state and restarts
-// its goroutine. Federation-only and CSRF-protected via
-// requireFederationPost. 409 when the watcher is not actually
+// its goroutine. Federation-only, whitelist-gated and CSRF-protected via
+// requireWhitelistedPost. 409 when the watcher is not actually
 // triggered (clicking the button after another tab already re-armed,
 // or stale UI). 303 → /admin/watcher when there is no running watcher
 // for this session npub (operator hasn't enrolled yet — same fallback
 // as the check-in handler).
 func (d *DeadManSwitch) handleAdminRearm(w http.ResponseWriter, r *http.Request) {
-	_, npub, ok := d.requireFederationPost(w, r)
+	_, npub, ok := d.requireWhitelistedPost(w, r)
 	if !ok {
 		return
 	}

@@ -857,3 +857,81 @@ func TestWatcherSetupLegacyMode(t *testing.T) {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
 }
+
+// postForm sends a CSRF-carrying form POST as the fixture's session and
+// returns the response without following redirects.
+func (fx *watcherSetupFixture) postForm(t *testing.T, srv *httptest.Server, path string, extra url.Values) *http.Response {
+	t.Helper()
+	form := url.Values{"csrf_token": {fx.csrf()}}
+	for k, v := range extra {
+		form[k] = v
+	}
+	req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(fx.sessionCookie())
+	resp, err := noRedirectClient(t, srv.Client()).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+func wantSignupRedirect(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/admin/signup" {
+		t.Fatalf("Location = %q, want /admin/signup", loc)
+	}
+}
+
+// A session with a valid CSRF token but no whitelist entry must not be
+// able to enroll a watcher: nothing may be written to the user store.
+func TestWatcherEnrollRejectsNonWhitelisted(t *testing.T) {
+	botSk := nostr.GeneratePrivateKey()
+	nsec, _ := nip19.EncodePrivateKey(botSk)
+	cases := []struct {
+		path  string
+		extra url.Values
+	}{
+		{"/admin/watcher/generate", nil},
+		{"/admin/watcher/import", url.Values{"nsec": {nsec}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			fx := newWatcherSetupFixture(t)
+			if err := fx.reg.wl.Remove(fx.userNpub); err != nil {
+				t.Fatal(err)
+			}
+			wantSignupRedirect(t, fx.postForm(t, fx.srv, tc.path, tc.extra))
+			if fx.store.HasUser(fx.userNpub) {
+				t.Fatal("user dir was created for a non-whitelisted npub")
+			}
+			if fx.store.HasSealedNsec(fx.userNpub) {
+				t.Fatal("sealed nsec was written for a non-whitelisted npub")
+			}
+		})
+	}
+}
+
+// After a revoke, a session that still holds a valid CSRF token must not
+// be able to act on the watcher it enrolled before. None of these handlers
+// sends anyone to /admin/signup on its own (check-in goes to /admin, rearm
+// answers 409 when untriggered, retry-start goes to /admin or
+// /admin/watcher), so that redirect shows the guard stopped the request.
+func TestWatcherActionsRejectRevokedUser(t *testing.T) {
+	for _, path := range []string{"/admin/check-in", "/admin/rearm", "/admin/watcher/retry-start"} {
+		t.Run(path, func(t *testing.T) {
+			fx := newWatcherSetupFixture(t)
+			srv := enrollForCheckIn(t, fx)
+			srv.Config.Handler.(*http.ServeMux).HandleFunc("/admin/watcher/retry-start",
+				fx.d.requireAuth(fx.d.handleWatcherRetryStart))
+			if err := fx.reg.wl.Remove(fx.userNpub); err != nil {
+				t.Fatal(err)
+			}
+			wantSignupRedirect(t, fx.postForm(t, srv, path, nil))
+		})
+	}
+}
