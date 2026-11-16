@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] — 2026-11-17
+
+Hardening release. No config or API changes.
+
+### Fixed
+
+- **Per-user watcher POSTs check the whitelist.** The generate, import,
+  retry-start, check-in and rearm handlers checked the session and CSRF
+  token but not the whitelist. The pages that issue those tokens already
+  send non-whitelisted sessions to `/admin/signup`, so in practice only
+  whitelisted users reached them. With the check in the handlers as
+  well, a session that isn't (or is no longer) whitelisted can't write a
+  user directory, sealed nsec or config before `Registry.Start` rejects
+  it, and a revoked user can't act on a watcher left over from before
+  the revoke. Those requests now redirect to `/admin/signup`, the same
+  as the pages. Admin roster actions are unchanged. (#48)
+
 ## [0.2.6] — 2026-09-20
 
 Reliability release. No config, API, or behavior changes to the switch
